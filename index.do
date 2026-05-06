@@ -54,18 +54,34 @@ export class ExecOptions {
 
 class ExecStdoutStream implements Stream<readonly byte[]> {
   process: NativeExecProcess
+  currentValue: readonly byte[] = []
 
-  next(): readonly byte[] | null {
-    return this.process.nextStdoutChunk()
+  next(): bool {
+    chunk := this.process.nextStdoutChunk()
+    if chunk == null {
+      return false
+    }
+    this.currentValue = chunk!
+    return true
   }
+
+  value(): readonly byte[] => this.currentValue
 }
 
 class ExecStderrStream implements Stream<readonly byte[]> {
   process: NativeExecProcess
+  currentValue: readonly byte[] = []
 
-  next(): readonly byte[] | null {
-    return this.process.nextStderrChunk()
+  next(): bool {
+    chunk := this.process.nextStderrChunk()
+    if chunk == null {
+      return false
+    }
+    this.currentValue = chunk!
+    return true
   }
+
+  value(): readonly byte[] => this.currentValue
 }
 
 export class Exec {
@@ -91,12 +107,12 @@ export class Exec {
     )
 
     return case started {
-      s: Success => Success {
+      s: Success -> Success {
         value: Exec {
           native: s.value
         }
       },
-      f: Failure => Failure {
+      f: Failure -> Failure {
         error: f.error
       }
     }
@@ -160,10 +176,10 @@ export class ExecResult {
 export function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
   let proc: Exec | null = null
   case Exec.spawn(command, args, options) {
-    s: Success => {
+    s: Success -> {
       proc = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       return Failure {
         error: f.error
       }
@@ -185,10 +201,10 @@ export function run(command: string, args: string[] = [], options: ExecOptions =
 
   let exitCode = 0
   case proc!.wait() {
-    s: Success => {
+    s: Success -> {
       exitCode = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       return Failure {
         error: f.error
       }

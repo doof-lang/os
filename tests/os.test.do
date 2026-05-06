@@ -16,8 +16,8 @@ function collectStream(stream: Stream<readonly byte[]>): readonly byte[] {
 
 function assertSuccessVoid(result: Result<void, string>, context: string): void {
   case result {
-    _: Success => {}
-    f: Failure => {
+    _: Success -> {}
+    f: Failure -> {
       assert(false, context + ": " + f.error)
     }
   }
@@ -27,10 +27,10 @@ export function testEnvReadsKnownVariable(): void {
   home := env("HOME")
   let value = ""
   case home {
-    s: Success => {
+    s: Success -> {
       value = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       assert(false, "expected HOME to be present and non-empty: " + f.error)
     }
   }
@@ -51,10 +51,10 @@ export function testRunCapturesStdoutAndStderr(): void {
     ["-c", "printf 'out'; printf 'err' 1>&2"],
     defaultOptions
   ) {
-    s: Success => {
+    s: Success -> {
       result = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       assert(false, "expected run() to succeed: " + f.error)
     }
   }
@@ -80,10 +80,10 @@ export function testExecSupportsCwdAndEnvOverride(): void {
     ["-c", "pwd; printf '%s' \"$DOOF_OS_TEST\""],
     options
   ) {
-    s: Success => {
+    s: Success -> {
       result = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       assert(false, "expected run() with cwd/env to succeed: " + f.error)
     }
   }
@@ -102,10 +102,10 @@ export function testExecStdinPushAndStreaming(): void {
   let proc: Exec | null = null
   defaultOptions := ExecOptions {}
   case Exec.spawn("/bin/sh", ["-c", "cat"], defaultOptions) {
-    s: Success => {
+    s: Success -> {
       proc = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       assert(false, "expected Exec.spawn to succeed: " + f.error)
     }
   }
@@ -121,10 +121,10 @@ export function testExecStdinPushAndStreaming(): void {
 
   let exitCode = -1
   case proc!.wait() {
-    s: Success => {
+    s: Success -> {
       exitCode = s.value
     }
-    f: Failure => {
+    f: Failure -> {
       assert(false, "expected process wait to succeed: " + f.error)
     }
   }
