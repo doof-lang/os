@@ -1,5 +1,6 @@
 import { BlobBuilder, BlobReader } from "std/blob"
 import { tempDirectory } from "std/path"
+import { Duration } from "std/time"
 import { Exec, ExecOptions, ExecResult, architecture, env, pid, platform, run } from "../index"
 
 function bytesToString(data: readonly byte[]): string {
@@ -64,6 +65,76 @@ export function testRunCapturesStdoutAndStderr(): void {
   assert(result!.exitCode == 0, "expected shell command to exit successfully")
   assert(bytesToString(result!.stdout) == "out", "expected stdout to be captured")
   assert(bytesToString(result!.stderr) == "err", "expected stderr to be captured")
+}
+
+export function testRunAllowsCommandToCompleteBeforeTimeout(): void {
+  let result: ExecResult | null = null
+  options := ExecOptions {
+    timeout: Duration.ofSeconds(1L)
+  }
+
+  case run(
+    "/bin/sh",
+    ["-c", "printf 'done'"],
+    options
+  ) {
+    s: Success -> {
+      result = s.value
+    }
+    f: Failure -> {
+      assert(false, "expected run() to complete before timeout: " + f.error)
+    }
+  }
+
+  assert(result != null, "expected run() to produce a result")
+  assert(result!.exitCode == 0, "expected shell command to exit successfully")
+  assert(bytesToString(result!.stdout) == "done", "expected stdout to be captured")
+}
+
+export function testRunTimesOutLongCommand(): void {
+  options := ExecOptions {
+    timeout: Duration.ofMillis(50L)
+  }
+
+  case run(
+    "/bin/sh",
+    ["-c", "sleep 1; printf 'late'"],
+    options
+  ) {
+    s: Success -> {
+      assert(false, "expected run() to fail on timeout with exit code " + string(s.value.exitCode))
+    }
+    f: Failure -> {
+      assert(f.error.contains("timed out"), "expected timeout failure message")
+    }
+  }
+}
+
+export function testSpawnedProcessWaitUsesTimeout(): void {
+  let proc: Exec | null = null
+  options := ExecOptions {
+    timeout: Duration.ofMillis(50L)
+  }
+
+  case Exec.spawn("/bin/sh", ["-c", "sleep 1"], options) {
+    s: Success -> {
+      proc = s.value
+    }
+    f: Failure -> {
+      assert(false, "expected Exec.spawn to succeed: " + f.error)
+    }
+  }
+
+  assert(proc != null, "expected Exec.spawn to produce a process")
+
+  case proc!.wait() {
+    s: Success -> {
+      assert(false, "expected wait() to fail on timeout with exit code " + string(s.value))
+    }
+    f: Failure -> {
+      assert(f.error.contains("timed out"), "expected timeout failure message")
+    }
+  }
 }
 
 export function testExecSupportsCwdAndEnvOverride(): void {

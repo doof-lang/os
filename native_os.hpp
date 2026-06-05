@@ -3,12 +3,14 @@
 #include "doof_runtime.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <memory>
+#include <poll.h>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -132,6 +134,25 @@ inline doof::Result<void, std::string> writeAllText(int fd, const std::string& v
     return doof::Result<void, std::string>::success();
 }
 
+inline bool setNonBlocking(int fd, std::string& error) {
+    if (fd < 0) {
+        return true;
+    }
+
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        error = errnoMessage("Failed to read file descriptor flags");
+        return false;
+    }
+
+    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        error = errnoMessage("Failed to set file descriptor non-blocking");
+        return false;
+    }
+
+    return true;
+}
+
 inline bool clearEnvironment(std::string& error) {
 #if defined(__APPLE__)
     std::vector<std::string> keys;
@@ -164,6 +185,34 @@ inline bool clearEnvironment(std::string& error) {
 
 }  // namespace doof_os
 
+class NativeRunResult {
+public:
+    NativeRunResult(
+        int32_t exitCode,
+        std::shared_ptr<std::vector<uint8_t>> stdoutBytes,
+        std::shared_ptr<std::vector<uint8_t>> stderrBytes
+    ) : exitCode_(exitCode),
+        stdout_(stdoutBytes == nullptr ? std::make_shared<std::vector<uint8_t>>() : stdoutBytes),
+        stderr_(stderrBytes == nullptr ? std::make_shared<std::vector<uint8_t>>() : stderrBytes) {}
+
+    int32_t exitCode() const {
+        return exitCode_;
+    }
+
+    std::shared_ptr<std::vector<uint8_t>> stdout() const {
+        return stdout_;
+    }
+
+    std::shared_ptr<std::vector<uint8_t>> stderr() const {
+        return stderr_;
+    }
+
+private:
+    int32_t exitCode_;
+    std::shared_ptr<std::vector<uint8_t>> stdout_;
+    std::shared_ptr<std::vector<uint8_t>> stderr_;
+};
+
 class NativeExecProcess {
 public:
     static doof::Result<std::shared_ptr<NativeExecProcess>, std::string> spawn(
@@ -174,10 +223,14 @@ public:
         const std::shared_ptr<std::vector<std::string>>& envValues,
         bool inheritEnv,
         bool withStdin,
-        bool mergeStderrIntoStdout
+        bool mergeStderrIntoStdout,
+        const std::optional<int64_t>& timeoutNanos
     ) {
         if (command.empty()) {
             return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Command cannot be empty");
+        }
+        if (timeoutNanos.has_value() && timeoutNanos.value() < 0) {
+            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Process timeout cannot be negative");
         }
         if (doof_os::containsNul(command)) {
             return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Command contains a NUL byte");
@@ -292,6 +345,10 @@ public:
                 _exit(127);
             };
 
+            if (::setpgid(0, 0) != 0) {
+                childFail(doof_os::errnoMessage("Failed to create process group"));
+            }
+
             if (::dup2(stdoutPipe[1], STDOUT_FILENO) < 0) {
                 childFail(doof_os::errnoMessage("Failed to map stdout"));
             }
@@ -398,7 +455,7 @@ public:
             return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(spawnError);
         }
 
-        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid));
+        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid, timeoutNanos));
         process->stdoutFd_ = stdoutPipe[0];
         process->stdoutOpen_ = true;
 
@@ -508,19 +565,120 @@ public:
             return doof::Result<int32_t, std::string>::success(exitCode_);
         }
 
-        int status = 0;
-        while (true) {
-            const pid_t waited = ::waitpid(childPid_, &status, 0);
-            if (waited == childPid_) {
-                exited_ = true;
-                exitCode_ = decodeExitCode(status);
+        if (!timeoutNanos_.has_value()) {
+            int status = 0;
+            while (true) {
+                const pid_t waited = ::waitpid(childPid_, &status, 0);
+                if (waited == childPid_) {
+                    exited_ = true;
+                    exitCode_ = decodeExitCode(status);
+                    return doof::Result<int32_t, std::string>::success(exitCode_);
+                }
+                if (waited < 0 && errno == EINTR) {
+                    continue;
+                }
+                return doof::Result<int32_t, std::string>::failure(doof_os::errnoMessage("Failed waiting for process"));
+            }
+        }
+
+        while (!exited_) {
+            reapChildNoHang();
+            if (exited_) {
                 return doof::Result<int32_t, std::string>::success(exitCode_);
             }
-            if (waited < 0 && errno == EINTR) {
+
+            if (hasTimedOut()) {
+                killTimedOutProcess();
+                return doof::Result<int32_t, std::string>::failure(timeoutMessage());
+            }
+
+            usleep(1000);
+        }
+
+        return doof::Result<int32_t, std::string>::success(exitCode_);
+    }
+
+    doof::Result<std::shared_ptr<NativeRunResult>, std::string> runToCompletion() {
+        if (childPid_ <= 0) {
+            return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure("Process handle is invalid");
+        }
+
+        std::string nonBlockingError;
+        if (!doof_os::setNonBlocking(stdoutFd_, nonBlockingError) || !doof_os::setNonBlocking(stderrFd_, nonBlockingError)) {
+            return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(nonBlockingError);
+        }
+
+        const auto stdoutBytes = std::make_shared<std::vector<uint8_t>>();
+        const auto stderrBytes = std::make_shared<std::vector<uint8_t>>();
+
+        if (stdinOpen_ && stdinFd_ >= 0) {
+            (void)closeStdin();
+        }
+
+        while (stdoutOpen_ || stderrOpen_ || !exited_) {
+            std::string readError;
+            if (!readAvailable(stdoutFd_, stdoutOpen_, *stdoutBytes, "stdout", readError)) {
+                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(readError);
+            }
+            if (!readAvailable(stderrFd_, stderrOpen_, *stderrBytes, "stderr", readError)) {
+                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(readError);
+            }
+
+            reapChildNoHang();
+            if (!stdoutOpen_ && !stderrOpen_ && exited_) {
+                break;
+            }
+
+            int pollTimeoutMs = -1;
+            if (timeoutNanos_.has_value()) {
+                if (hasTimedOut()) {
+                    killTimedOutProcess();
+                    return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(timeoutMessage());
+                }
+                pollTimeoutMs = remainingTimeoutMillis();
+            }
+
+            struct pollfd fds[2];
+            nfds_t fdCount = 0;
+            if (stdoutOpen_ && stdoutFd_ >= 0) {
+                fds[fdCount].fd = stdoutFd_;
+                fds[fdCount].events = POLLIN | POLLHUP | POLLERR;
+                fds[fdCount].revents = 0;
+                ++fdCount;
+            }
+            if (stderrOpen_ && stderrFd_ >= 0) {
+                fds[fdCount].fd = stderrFd_;
+                fds[fdCount].events = POLLIN | POLLHUP | POLLERR;
+                fds[fdCount].revents = 0;
+                ++fdCount;
+            }
+
+            if (fdCount == 0) {
+                const int status = waitForExitSlice(pollTimeoutMs);
+                if (status < 0) {
+                    return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(
+                        doof_os::errnoMessage("Failed waiting for process")
+                    );
+                }
                 continue;
             }
-            return doof::Result<int32_t, std::string>::failure(doof_os::errnoMessage("Failed waiting for process"));
+
+            while (true) {
+                const int ready = ::poll(fds, fdCount, pollTimeoutMs);
+                if (ready >= 0) {
+                    break;
+                }
+                if (errno == EINTR) {
+                    continue;
+                }
+                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(
+                    doof_os::errnoMessage("Failed polling process output")
+                );
+            }
         }
+
+        const auto result = std::make_shared<NativeRunResult>(exitCode_, stdoutBytes, stderrBytes);
+        return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::success(result);
     }
 
     doof::Result<void, std::string> terminate(int32_t signal) {
@@ -544,8 +702,10 @@ public:
     }
 
 private:
-    explicit NativeExecProcess(pid_t childPid)
+    explicit NativeExecProcess(pid_t childPid, std::optional<int64_t> timeoutNanos)
         : childPid_(childPid),
+          startedAt_(std::chrono::steady_clock::now()),
+          timeoutNanos_(timeoutNanos),
           stdoutFd_(-1),
           stderrFd_(-1),
           stdinFd_(-1),
@@ -565,7 +725,148 @@ private:
         return -1;
     }
 
+    static bool readAvailable(
+        int& fd,
+        bool& isOpen,
+        std::vector<uint8_t>& output,
+        const std::string& name,
+        std::string& error
+    ) {
+        if (!isOpen || fd < 0) {
+            return true;
+        }
+
+        uint8_t buffer[4096];
+        while (true) {
+            const ssize_t bytesRead = ::read(fd, buffer, sizeof(buffer));
+            if (bytesRead > 0) {
+                output.insert(output.end(), buffer, buffer + bytesRead);
+                continue;
+            }
+            if (bytesRead == 0) {
+                ::close(fd);
+                fd = -1;
+                isOpen = false;
+                return true;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return true;
+            }
+            error = doof_os::errnoMessage("Failed to read " + name);
+            return false;
+        }
+    }
+
+    void reapChildNoHang() {
+        if (exited_ || childPid_ <= 0) {
+            return;
+        }
+
+        int status = 0;
+        const pid_t waited = ::waitpid(childPid_, &status, WNOHANG);
+        if (waited == childPid_) {
+            exited_ = true;
+            exitCode_ = decodeExitCode(status);
+        }
+    }
+
+    bool hasTimedOut() const {
+        if (!timeoutNanos_.has_value()) {
+            return false;
+        }
+        return std::chrono::steady_clock::now() - startedAt_ >= std::chrono::nanoseconds(timeoutNanos_.value());
+    }
+
+    int remainingTimeoutMillis() const {
+        if (!timeoutNanos_.has_value()) {
+            return -1;
+        }
+
+        const auto timeout = std::chrono::nanoseconds(timeoutNanos_.value());
+        const auto elapsed = std::chrono::steady_clock::now() - startedAt_;
+        if (elapsed >= timeout) {
+            return 0;
+        }
+
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(timeout - elapsed).count();
+        return remaining <= 0 ? 0 : static_cast<int>(remaining > 2147483647LL ? 2147483647LL : remaining);
+    }
+
+    std::string timeoutMessage() const {
+        if (!timeoutNanos_.has_value()) {
+            return "Process timed out";
+        }
+        return "Process timed out after " + std::to_string(timeoutNanos_.value()) + " ns";
+    }
+
+    int waitForExitSlice(int timeoutMs) {
+        const auto start = std::chrono::steady_clock::now();
+        while (!exited_) {
+            reapChildNoHang();
+            if (exited_) {
+                return 0;
+            }
+
+            if (timeoutMs >= 0) {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start
+                ).count();
+                if (elapsed >= timeoutMs) {
+                    return 0;
+                }
+            }
+
+            usleep(1000);
+        }
+        return 0;
+    }
+
+    void killTimedOutProcess() {
+        if (!exited_ && childPid_ > 0) {
+            (void)::kill(-childPid_, SIGTERM);
+            for (int i = 0; i < 100; ++i) {
+                reapChildNoHang();
+                if (exited_) {
+                    break;
+                }
+                usleep(1000);
+            }
+            if (!exited_) {
+                (void)::kill(-childPid_, SIGKILL);
+                int status = 0;
+                while (true) {
+                    const pid_t waited = ::waitpid(childPid_, &status, 0);
+                    if (waited == childPid_) {
+                        exited_ = true;
+                        exitCode_ = decodeExitCode(status);
+                        break;
+                    }
+                    if (waited < 0 && errno == EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+
+        closeOutputFd(stdoutFd_, stdoutOpen_);
+        closeOutputFd(stderrFd_, stderrOpen_);
+    }
+
+    static void closeOutputFd(int& fd, bool& isOpen) {
+        if (fd >= 0) {
+            ::close(fd);
+            fd = -1;
+        }
+        isOpen = false;
+    }
+
     pid_t childPid_;
+    std::chrono::steady_clock::time_point startedAt_;
+    std::optional<int64_t> timeoutNanos_;
     int stdoutFd_;
     int stderrFd_;
     int stdinFd_;

@@ -10,6 +10,7 @@
 - `architecture(): string`
 - `Exec.spawn(command, args, options): Result<Exec, string>`
 - `run(command, args, options): Result<ExecResult, string>`
+- `run(command, args, ExecOptions { timeout: Duration.ofSeconds(5L) })`
 
 ## ExecOptions
 
@@ -18,6 +19,7 @@
 - `inheritEnv: bool` - whether to inherit parent environment before overrides.
 - `withStdin: bool` - whether to open writable stdin for child process.
 - `mergeStderrIntoStdout: bool` - redirect stderr into stdout to simplify single-stream reading.
+- `timeout: Duration | null` - optional process timeout, measured from `Exec.spawn()`. `run()` and `wait()` terminate the process and return a failure when the timeout is reached.
 
 ## Exec
 
@@ -32,4 +34,5 @@
 ## Notes
 
 - `stdoutStream()` and `stderrStream()` are blocking pull streams and return `null` on EOF.
+- `timeout` is enforced by `run()` and `wait()`; individual blocking stream reads do not wake up on the timeout by themselves.
 - If your child process writes heavily to stderr while you only consume stdout, use `mergeStderrIntoStdout: true` to avoid pipe backpressure deadlocks.

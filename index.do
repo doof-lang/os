@@ -1,4 +1,4 @@
-import { BlobBuilder } from "std/blob"
+import { Duration } from "std/time"
 
 import function _env(name: string): Result<string, string> from "native_os.hpp" as doof_os::env
 import function _pid(): int from "native_os.hpp" as doof_os::pid
@@ -14,7 +14,8 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
     envValues: string[],
     inheritEnv: bool,
     withStdin: bool,
-    mergeStderrIntoStdout: bool
+    mergeStderrIntoStdout: bool,
+    timeoutNanos: long | null
   ): Result<NativeExecProcess, string>
 
   nextStdoutChunk(): readonly byte[] | null
@@ -23,9 +24,16 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
   closeStdin(): Result<void, string>
   isRunning(): bool
   wait(): Result<int, string>
+  runToCompletion(): Result<NativeRunResult, string>
   terminate(signal: int): Result<void, string>
   stdoutOpen(): bool
   stderrOpen(): bool
+}
+
+import class NativeRunResult from "native_os.hpp" {
+  exitCode(): int
+  stdout(): readonly byte[]
+  stderr(): readonly byte[]
 }
 
 export function env(name: string): Result<string, string> {
@@ -50,6 +58,33 @@ export class ExecOptions {
   readonly inheritEnv: bool = true
   readonly withStdin: bool = true
   readonly mergeStderrIntoStdout: bool = false
+  readonly timeout: Duration | null = null
+}
+
+function spawnNative(command: string, args: string[], options: ExecOptions): Result<NativeExecProcess, string> {
+  envKeys: string[] := []
+  envValues: string[] := []
+  for key, value of options.env {
+    envKeys.push(key)
+    envValues.push(value)
+  }
+
+  let timeoutNanos: long | null = null
+  if options.timeout != null {
+    timeoutNanos = options.timeout!.toNanos()
+  }
+
+  return NativeExecProcess.spawn(
+    command,
+    args,
+    options.cwd,
+    envKeys,
+    envValues,
+    options.inheritEnv,
+    options.withStdin,
+    options.mergeStderrIntoStdout,
+    timeoutNanos,
+  )
 }
 
 class ExecStdoutStream implements Stream<readonly byte[]> {
@@ -88,25 +123,7 @@ export class Exec {
   private readonly native: NativeExecProcess
 
   static spawn(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<Exec, string> {
-    envKeys: string[] := []
-    envValues: string[] := []
-    for key, value of options.env {
-      envKeys.push(key)
-      envValues.push(value)
-    }
-
-    started := NativeExecProcess.spawn(
-      command,
-      args,
-      options.cwd,
-      envKeys,
-      envValues,
-      options.inheritEnv,
-      options.withStdin,
-      options.mergeStderrIntoStdout,
-    )
-
-    return case started {
+    return case spawnNative(command, args, options) {
       s: Success -> Success {
         value: Exec {
           native: s.value
@@ -174,8 +191,8 @@ export class ExecResult {
 }
 
 export function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
-  let proc: Exec | null = null
-  case Exec.spawn(command, args, options) {
+  let proc: NativeExecProcess | null = null
+  case spawnNative(command, args, options) {
     s: Success -> {
       proc = s.value
     }
@@ -188,34 +205,21 @@ export function run(command: string, args: string[] = [], options: ExecOptions =
 
   assert(proc != null, "expected Exec.spawn success case to initialize proc")
 
-  stdoutBuilder := BlobBuilder()
-  stderrBuilder := BlobBuilder()
-
-  for chunk of proc!.stdoutStream() {
-    stdoutBuilder.writeBytes(chunk)
-  }
-
-  for chunk of proc!.stderrStream() {
-    stderrBuilder.writeBytes(chunk)
-  }
-
-  let exitCode = 0
-  case proc!.wait() {
+  case proc!.runToCompletion() {
     s: Success -> {
-      exitCode = s.value
+      nativeResult := s.value
+      return Success {
+        value: ExecResult {
+          exitCode: nativeResult.exitCode(),
+          stdout: nativeResult.stdout(),
+          stderr: nativeResult.stderr()
+        }
+      }
     }
     f: Failure -> {
       return Failure {
         error: f.error
       }
-    }
-  }
-
-  return Success {
-    value: ExecResult {
-      exitCode: exitCode,
-      stdout: stdoutBuilder.build(),
-      stderr: stderrBuilder.build()
     }
   }
 }
