@@ -1,0 +1,135 @@
+# std/os Guide
+
+`std/os` exposes process and runtime operating-system helpers. Use the simple
+helpers for environment and platform discovery, `run` for command execution when
+you want all output buffered, and `Exec.spawn` when you need streaming output or
+interactive stdin.
+
+## Quick Start
+
+```doof
+import { ExecOptions, run } from "std/os"
+import { Duration } from "std/time"
+
+result := try! run(
+  "git",
+  ["status", "--short"],
+  ExecOptions {
+    timeout: Duration.ofSeconds(5L),
+    mergeStderrIntoStdout: true,
+  },
+)
+
+println("exit: ${result.exitCode}")
+```
+
+## Environment And Platform
+
+`env(name)` reads one environment variable and returns `Failure` when it is not
+available. `pid()`, `platform()`, and `architecture()` query the current process
+and runtime platform.
+
+## Running Commands
+
+Use `run(command, args, options)` for the common case. It spawns the child,
+waits for completion, buffers stdout and stderr, and returns `ExecResult`.
+Non-zero exit codes are represented in `ExecResult.exitCode`; spawn failures,
+I/O failures, and timeouts return `Failure<string>`.
+
+Use `Exec.spawn(command, args, options)` when the caller must stream output,
+write stdin, terminate the process, or wait later.
+
+## Streams, Stdin, And Deadlocks
+
+`Exec.stdoutStream()` and `Exec.stderrStream()` are blocking pull streams. If a
+child writes a lot to stderr while the caller only reads stdout, the child can
+block on a full stderr pipe. Set `mergeStderrIntoStdout: true` for single-stream
+consumption, or read both streams.
+
+`withStdin` defaults to `true`, so spawned children get a writable stdin pipe.
+Call `closeStdin()` after writing all input so programs waiting for EOF can
+finish.
+
+## Timeouts
+
+`ExecOptions.timeout` is measured from process spawn. `run()` and `wait()`
+terminate the process and return `Failure` when the timeout is reached.
+Individual blocking stream reads do not wake themselves up at the timeout; use
+`run()` or coordinate stream reads carefully if timeout behavior matters.
+
+## API
+
+### Runtime helpers
+
+```doof
+export function env(name: string): Result<string, string>
+export function pid(): int
+export function platform(): string
+export function architecture(): string
+```
+
+Defined in [index.do](../index.do).
+
+### `ExecOptions`
+
+```doof
+export class ExecOptions
+```
+
+Fields:
+
+- `cwd: string | null = null` sets the child working directory.
+- `env: Map<string, string> = {}` adds or overrides child environment values.
+- `inheritEnv: bool = true` starts from the parent environment before applying `env`.
+- `withStdin: bool = true` opens a writable stdin pipe.
+- `mergeStderrIntoStdout: bool = false` redirects stderr into stdout.
+- `timeout: Duration | null = null` sets an optional process timeout.
+
+Defined in [index.do](../index.do).
+
+### `Exec`
+
+```doof
+export class Exec
+```
+
+Methods:
+
+- `static spawn(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<Exec, string>`
+- `stdoutStream(): Stream<readonly byte[]>`
+- `stderrStream(): Stream<readonly byte[]>`
+- `nextStdoutChunk(): readonly byte[] | null`
+- `nextStderrChunk(): readonly byte[] | null`
+- `writeStdinText(value: string): Result<void, string>`
+- `closeStdin(): Result<void, string>`
+- `isRunning(): bool`
+- `wait(): Result<int, string>`
+- `terminate(signal: int = 15): Result<void, string>`
+- `stdoutOpen(): bool`
+- `stderrOpen(): bool`
+
+Defined in [index.do](../index.do).
+
+### `ExecResult`
+
+```doof
+export class ExecResult
+```
+
+Fields:
+
+- `exitCode: int`
+- `stdout: readonly byte[]`
+- `stderr: readonly byte[]`
+
+Defined in [index.do](../index.do).
+
+### `run`
+
+```doof
+export function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string>
+```
+
+Run a child process to completion and collect stdout and stderr.
+
+Defined in [index.do](../index.do).

@@ -2,6 +2,11 @@
 
 `std/os` provides process and runtime OS helpers.
 
+## Documentation
+
+- [Guide and API reference](docs/API.md) explains environment helpers, process execution, streams, timeouts, and deadlock avoidance.
+- Tests can be run with `doof test os`.
+
 ## API
 
 - `env(name: string): Result<string, string>`
