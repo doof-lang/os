@@ -31,18 +31,18 @@ inline std::string errnoMessage(const std::string& action) {
 
 inline doof::Result<std::string, std::string> env(const std::string& name) {
     if (name.empty()) {
-        return doof::Result<std::string, std::string>::failure("Environment variable name cannot be empty");
+        return doof::Failure<std::string>{"Environment variable name cannot be empty"};
     }
     if (containsNul(name)) {
-        return doof::Result<std::string, std::string>::failure("Environment variable name contains a NUL byte");
+        return doof::Failure<std::string>{"Environment variable name contains a NUL byte"};
     }
 
     const char* value = std::getenv(name.c_str());
     if (value == nullptr) {
-        return doof::Result<std::string, std::string>::failure("Environment variable not found: " + name);
+        return doof::Failure<std::string>{"Environment variable not found: " + name};
     }
 
-    return doof::Result<std::string, std::string>::success(std::string(value));
+    return doof::Success<std::string>{std::string(value)};
 }
 
 inline int32_t pid() {
@@ -125,13 +125,13 @@ inline doof::Result<void, std::string> writeAllText(int fd, const std::string& v
         }
 
         if (written < 0 && errno == EPIPE) {
-            return doof::Result<void, std::string>::failure("Cannot write to stdin: process closed the pipe");
+            return doof::Failure<std::string>{"Cannot write to stdin: process closed the pipe"};
         }
 
-        return doof::Result<void, std::string>::failure(errnoMessage("Failed to write to stdin"));
+        return doof::Failure<std::string>{errnoMessage("Failed to write to stdin")};
     }
 
-    return doof::Result<void, std::string>::success();
+    return doof::Success<void>{};
 }
 
 inline bool setNonBlocking(int fd, std::string& error) {
@@ -227,44 +227,44 @@ public:
         const std::optional<int64_t>& timeoutNanos
     ) {
         if (command.empty()) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Command cannot be empty");
+            return doof::Failure<std::string>{"Command cannot be empty"};
         }
         if (timeoutNanos.has_value() && timeoutNanos.value() < 0) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Process timeout cannot be negative");
+            return doof::Failure<std::string>{"Process timeout cannot be negative"};
         }
         if (doof_os::containsNul(command)) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Command contains a NUL byte");
+            return doof::Failure<std::string>{"Command contains a NUL byte"};
         }
 
         if (args != nullptr) {
             for (const auto& arg : *args) {
                 if (doof_os::containsNul(arg)) {
-                    return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Argument contains a NUL byte");
+                    return doof::Failure<std::string>{"Argument contains a NUL byte"};
                 }
             }
         }
 
         if (cwd.has_value() && doof_os::containsNul(cwd.value())) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Working directory contains a NUL byte");
+            return doof::Failure<std::string>{"Working directory contains a NUL byte"};
         }
 
         const size_t keyCount = envKeys == nullptr ? 0 : envKeys->size();
         const size_t valueCount = envValues == nullptr ? 0 : envValues->size();
         if (keyCount != valueCount) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Environment key/value arrays must be the same length");
+            return doof::Failure<std::string>{"Environment key/value arrays must be the same length"};
         }
 
         for (size_t i = 0; i < keyCount; ++i) {
             const std::string& key = (*envKeys)[i];
             const std::string& value = (*envValues)[i];
             if (key.empty()) {
-                return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Environment variable name cannot be empty");
+                return doof::Failure<std::string>{"Environment variable name cannot be empty"};
             }
             if (key.find('=') != std::string::npos) {
-                return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Environment variable name cannot contain '='");
+                return doof::Failure<std::string>{"Environment variable name cannot contain '='"};
             }
             if (doof_os::containsNul(key) || doof_os::containsNul(value)) {
-                return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure("Environment variable key/value contains a NUL byte");
+                return doof::Failure<std::string>{"Environment variable key/value contains a NUL byte"};
             }
         }
 
@@ -274,17 +274,13 @@ public:
         int execErrorPipe[2] = {-1, -1};
 
         if (::pipe(stdoutPipe) != 0) {
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(
-                doof_os::errnoMessage("Failed to create stdout pipe")
-            );
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stdout pipe")};
         }
 
         if (!mergeStderrIntoStdout && ::pipe(stderrPipe) != 0) {
             ::close(stdoutPipe[0]);
             ::close(stdoutPipe[1]);
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(
-                doof_os::errnoMessage("Failed to create stderr pipe")
-            );
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stderr pipe")};
         }
 
         if (withStdin && ::pipe(stdinPipe) != 0) {
@@ -294,9 +290,7 @@ public:
                 ::close(stderrPipe[0]);
                 ::close(stderrPipe[1]);
             }
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(
-                doof_os::errnoMessage("Failed to create stdin pipe")
-            );
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stdin pipe")};
         }
 
         if (::pipe(execErrorPipe) != 0) {
@@ -310,9 +304,7 @@ public:
                 ::close(stdinPipe[0]);
                 ::close(stdinPipe[1]);
             }
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(
-                doof_os::errnoMessage("Failed to create exec-error pipe")
-            );
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create exec-error pipe")};
         }
 
         const int flags = ::fcntl(execErrorPipe[1], F_GETFD);
@@ -332,9 +324,7 @@ public:
             }
             ::close(execErrorPipe[0]);
             ::close(execErrorPipe[1]);
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(
-                doof_os::errnoMessage("Failed to fork process")
-            );
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to fork process")};
         }
 
         if (childPid == 0) {
@@ -452,7 +442,7 @@ public:
             if (withStdin) {
                 ::close(stdinPipe[1]);
             }
-            return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::failure(spawnError);
+            return doof::Failure<std::string>{spawnError};
         }
 
         auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid, timeoutNanos));
@@ -470,7 +460,7 @@ public:
         process->stdinFd_ = withStdin ? stdinPipe[1] : -1;
         process->stdinOpen_ = withStdin;
 
-        return doof::Result<std::shared_ptr<NativeExecProcess>, std::string>::success(process);
+        return doof::Success<std::shared_ptr<NativeExecProcess>>{process};
     }
 
     ~NativeExecProcess() {
@@ -512,10 +502,10 @@ public:
 
     doof::Result<void, std::string> writeStdinText(const std::string& value) {
         if (!stdinOpen_ || stdinFd_ < 0) {
-            return doof::Result<void, std::string>::failure("Stdin is not open for this process");
+            return doof::Failure<std::string>{"Stdin is not open for this process"};
         }
         if (doof_os::containsNul(value)) {
-            return doof::Result<void, std::string>::failure("Stdin payload contains a NUL byte");
+            return doof::Failure<std::string>{"Stdin payload contains a NUL byte"};
         }
 
         return doof_os::writeAllText(stdinFd_, value);
@@ -523,17 +513,17 @@ public:
 
     doof::Result<void, std::string> closeStdin() {
         if (!stdinOpen_ || stdinFd_ < 0) {
-            return doof::Result<void, std::string>::success();
+            return doof::Success<void>{};
         }
 
         const int fd = stdinFd_;
         stdinFd_ = -1;
         stdinOpen_ = false;
         if (::close(fd) != 0) {
-            return doof::Result<void, std::string>::failure(doof_os::errnoMessage("Failed to close stdin"));
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to close stdin")};
         }
 
-        return doof::Result<void, std::string>::success();
+        return doof::Success<void>{};
     }
 
     bool isRunning() {
@@ -558,11 +548,11 @@ public:
 
     doof::Result<int32_t, std::string> wait() {
         if (childPid_ <= 0) {
-            return doof::Result<int32_t, std::string>::failure("Process handle is invalid");
+            return doof::Failure<std::string>{"Process handle is invalid"};
         }
 
         if (exited_) {
-            return doof::Result<int32_t, std::string>::success(exitCode_);
+            return doof::Success<int32_t>{exitCode_};
         }
 
         if (!timeoutNanos_.has_value()) {
@@ -572,40 +562,40 @@ public:
                 if (waited == childPid_) {
                     exited_ = true;
                     exitCode_ = decodeExitCode(status);
-                    return doof::Result<int32_t, std::string>::success(exitCode_);
+                    return doof::Success<int32_t>{exitCode_};
                 }
                 if (waited < 0 && errno == EINTR) {
                     continue;
                 }
-                return doof::Result<int32_t, std::string>::failure(doof_os::errnoMessage("Failed waiting for process"));
+                return doof::Failure<std::string>{doof_os::errnoMessage("Failed waiting for process")};
             }
         }
 
         while (!exited_) {
             reapChildNoHang();
             if (exited_) {
-                return doof::Result<int32_t, std::string>::success(exitCode_);
+                return doof::Success<int32_t>{exitCode_};
             }
 
             if (hasTimedOut()) {
                 killTimedOutProcess();
-                return doof::Result<int32_t, std::string>::failure(timeoutMessage());
+                return doof::Failure<std::string>{timeoutMessage()};
             }
 
             usleep(1000);
         }
 
-        return doof::Result<int32_t, std::string>::success(exitCode_);
+        return doof::Success<int32_t>{exitCode_};
     }
 
     doof::Result<std::shared_ptr<NativeRunResult>, std::string> runToCompletion() {
         if (childPid_ <= 0) {
-            return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure("Process handle is invalid");
+            return doof::Failure<std::string>{"Process handle is invalid"};
         }
 
         std::string nonBlockingError;
         if (!doof_os::setNonBlocking(stdoutFd_, nonBlockingError) || !doof_os::setNonBlocking(stderrFd_, nonBlockingError)) {
-            return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(nonBlockingError);
+            return doof::Failure<std::string>{nonBlockingError};
         }
 
         const auto stdoutBytes = std::make_shared<std::vector<uint8_t>>();
@@ -618,10 +608,10 @@ public:
         while (stdoutOpen_ || stderrOpen_ || !exited_) {
             std::string readError;
             if (!readAvailable(stdoutFd_, stdoutOpen_, *stdoutBytes, "stdout", readError)) {
-                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(readError);
+                return doof::Failure<std::string>{readError};
             }
             if (!readAvailable(stderrFd_, stderrOpen_, *stderrBytes, "stderr", readError)) {
-                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(readError);
+                return doof::Failure<std::string>{readError};
             }
 
             reapChildNoHang();
@@ -633,7 +623,7 @@ public:
             if (timeoutNanos_.has_value()) {
                 if (hasTimedOut()) {
                     killTimedOutProcess();
-                    return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(timeoutMessage());
+                    return doof::Failure<std::string>{timeoutMessage()};
                 }
                 pollTimeoutMs = remainingTimeoutMillis();
             }
@@ -656,9 +646,7 @@ public:
             if (fdCount == 0) {
                 const int status = waitForExitSlice(pollTimeoutMs);
                 if (status < 0) {
-                    return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(
-                        doof_os::errnoMessage("Failed waiting for process")
-                    );
+                    return doof::Failure<std::string>{doof_os::errnoMessage("Failed waiting for process")};
                 }
                 continue;
             }
@@ -671,26 +659,24 @@ public:
                 if (errno == EINTR) {
                     continue;
                 }
-                return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::failure(
-                    doof_os::errnoMessage("Failed polling process output")
-                );
+                return doof::Failure<std::string>{doof_os::errnoMessage("Failed polling process output")};
             }
         }
 
         const auto result = std::make_shared<NativeRunResult>(exitCode_, stdoutBytes, stderrBytes);
-        return doof::Result<std::shared_ptr<NativeRunResult>, std::string>::success(result);
+        return doof::Success<std::shared_ptr<NativeRunResult>>{result};
     }
 
     doof::Result<void, std::string> terminate(int32_t signal) {
         if (childPid_ <= 0 || exited_) {
-            return doof::Result<void, std::string>::failure("Process is not running");
+            return doof::Failure<std::string>{"Process is not running"};
         }
 
         if (::kill(childPid_, signal) != 0) {
-            return doof::Result<void, std::string>::failure(doof_os::errnoMessage("Failed to signal process"));
+            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to signal process")};
         }
 
-        return doof::Result<void, std::string>::success();
+        return doof::Success<void>{};
     }
 
     bool stdoutOpen() const {
