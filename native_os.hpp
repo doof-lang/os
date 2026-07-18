@@ -2,6 +2,7 @@
 
 #include "doof_runtime.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -11,6 +12,7 @@
 #include <fcntl.h>
 #include <memory>
 #include <poll.h>
+#include <spawn.h>
 #include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -18,6 +20,10 @@
 #include <vector>
 
 extern char** environ;
+
+#if defined(__linux__)
+extern "C" int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t*, const char*);
+#endif
 
 namespace doof_os {
 
@@ -190,10 +196,14 @@ public:
     NativeRunResult(
         int32_t exitCode,
         std::shared_ptr<std::vector<uint8_t>> stdoutBytes,
-        std::shared_ptr<std::vector<uint8_t>> stderrBytes
+        std::shared_ptr<std::vector<uint8_t>> stderrBytes,
+        bool stdoutTruncated,
+        bool stderrTruncated
     ) : exitCode_(exitCode),
         stdout_(stdoutBytes == nullptr ? std::make_shared<std::vector<uint8_t>>() : stdoutBytes),
-        stderr_(stderrBytes == nullptr ? std::make_shared<std::vector<uint8_t>>() : stderrBytes) {}
+        stderr_(stderrBytes == nullptr ? std::make_shared<std::vector<uint8_t>>() : stderrBytes),
+        stdoutTruncated_(stdoutTruncated),
+        stderrTruncated_(stderrTruncated) {}
 
     int32_t exitCode() const {
         return exitCode_;
@@ -207,10 +217,15 @@ public:
         return stderr_;
     }
 
+    bool stdoutTruncated() const { return stdoutTruncated_; }
+    bool stderrTruncated() const { return stderrTruncated_; }
+
 private:
     int32_t exitCode_;
     std::shared_ptr<std::vector<uint8_t>> stdout_;
     std::shared_ptr<std::vector<uint8_t>> stderr_;
+    bool stdoutTruncated_;
+    bool stderrTruncated_;
 };
 
 class NativeExecProcess {
@@ -224,6 +239,8 @@ public:
         bool inheritEnv,
         bool withStdin,
         bool mergeStderrIntoStdout,
+        bool inheritOutput,
+        const std::optional<int64_t>& maxOutputBytes,
         const std::optional<int64_t>& timeoutNanos
     ) {
         if (command.empty()) {
@@ -231,6 +248,9 @@ public:
         }
         if (timeoutNanos.has_value() && timeoutNanos.value() < 0) {
             return doof::Failure<std::string>{"Process timeout cannot be negative"};
+        }
+        if (maxOutputBytes.has_value() && maxOutputBytes.value() < 0) {
+            return doof::Failure<std::string>{"Maximum output bytes cannot be negative"};
         }
         if (doof_os::containsNul(command)) {
             return doof::Failure<std::string>{"Command contains a NUL byte"};
@@ -271,188 +291,117 @@ public:
         int stdoutPipe[2] = {-1, -1};
         int stderrPipe[2] = {-1, -1};
         int stdinPipe[2] = {-1, -1};
-        int execErrorPipe[2] = {-1, -1};
 
-        if (::pipe(stdoutPipe) != 0) {
+        if (!inheritOutput && ::pipe(stdoutPipe) != 0) {
             return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stdout pipe")};
         }
 
-        if (!mergeStderrIntoStdout && ::pipe(stderrPipe) != 0) {
-            ::close(stdoutPipe[0]);
-            ::close(stdoutPipe[1]);
+        if (!inheritOutput && !mergeStderrIntoStdout && ::pipe(stderrPipe) != 0) {
+            if (stdoutPipe[0] >= 0) ::close(stdoutPipe[0]);
+            if (stdoutPipe[1] >= 0) ::close(stdoutPipe[1]);
             return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stderr pipe")};
         }
 
         if (withStdin && ::pipe(stdinPipe) != 0) {
-            ::close(stdoutPipe[0]);
-            ::close(stdoutPipe[1]);
-            if (!mergeStderrIntoStdout) {
+            if (stdoutPipe[0] >= 0) ::close(stdoutPipe[0]);
+            if (stdoutPipe[1] >= 0) ::close(stdoutPipe[1]);
+            if (stderrPipe[0] >= 0) {
                 ::close(stderrPipe[0]);
                 ::close(stderrPipe[1]);
             }
             return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create stdin pipe")};
         }
 
-        if (::pipe(execErrorPipe) != 0) {
-            ::close(stdoutPipe[0]);
-            ::close(stdoutPipe[1]);
-            if (!mergeStderrIntoStdout) {
-                ::close(stderrPipe[0]);
-                ::close(stderrPipe[1]);
-            }
-            if (withStdin) {
-                ::close(stdinPipe[0]);
-                ::close(stdinPipe[1]);
-            }
-            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to create exec-error pipe")};
+        std::vector<char*> argv;
+        argv.reserve((args == nullptr ? 0 : args->size()) + 2);
+        argv.push_back(const_cast<char*>(command.c_str()));
+        if (args != nullptr) {
+            for (const auto& arg : *args) argv.push_back(const_cast<char*>(arg.c_str()));
         }
+        argv.push_back(nullptr);
 
-        const int flags = ::fcntl(execErrorPipe[1], F_GETFD);
-        ::fcntl(execErrorPipe[1], F_SETFD, flags | FD_CLOEXEC);
-
-        const pid_t childPid = ::fork();
-        if (childPid < 0) {
-            ::close(stdoutPipe[0]);
-            ::close(stdoutPipe[1]);
-            if (!mergeStderrIntoStdout) {
-                ::close(stderrPipe[0]);
-                ::close(stderrPipe[1]);
+        std::vector<std::string> environment;
+        if (inheritEnv && environ != nullptr) {
+            for (char** entry = environ; *entry != nullptr; ++entry) {
+                const std::string pair(*entry);
+                const size_t separator = pair.find('=');
+                bool overridden = false;
+                for (size_t i = 0; i < keyCount; ++i) {
+                    if (separator == (*envKeys)[i].size() && pair.compare(0, separator, (*envKeys)[i]) == 0) {
+                        overridden = true;
+                        break;
+                    }
+                }
+                if (!overridden) environment.push_back(pair);
             }
-            if (withStdin) {
-                ::close(stdinPipe[0]);
-                ::close(stdinPipe[1]);
-            }
-            ::close(execErrorPipe[0]);
-            ::close(execErrorPipe[1]);
-            return doof::Failure<std::string>{doof_os::errnoMessage("Failed to fork process")};
         }
+        for (size_t i = 0; i < keyCount; ++i) environment.push_back((*envKeys)[i] + "=" + (*envValues)[i]);
+        std::vector<char*> envp;
+        envp.reserve(environment.size() + 1);
+        for (auto& entry : environment) envp.push_back(entry.data());
+        envp.push_back(nullptr);
 
-        if (childPid == 0) {
-            ::close(execErrorPipe[0]);
-
-            auto childFail = [&](const std::string& message) {
-                (void)::write(execErrorPipe[1], message.data(), message.size());
-                _exit(127);
-            };
-
-            if (::setpgid(0, 0) != 0) {
-                childFail(doof_os::errnoMessage("Failed to create process group"));
-            }
-
-            if (::dup2(stdoutPipe[1], STDOUT_FILENO) < 0) {
-                childFail(doof_os::errnoMessage("Failed to map stdout"));
-            }
-
+        posix_spawn_file_actions_t actions;
+        int setupResult = ::posix_spawn_file_actions_init(&actions);
+        const bool actionsInitialized = setupResult == 0;
+        if (setupResult == 0 && !inheritOutput) {
+            setupResult = ::posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], STDOUT_FILENO);
             if (mergeStderrIntoStdout) {
-                if (::dup2(stdoutPipe[1], STDERR_FILENO) < 0) {
-                    childFail(doof_os::errnoMessage("Failed to map stderr to stdout"));
-                }
+                if (setupResult == 0) setupResult = ::posix_spawn_file_actions_adddup2(&actions, stdoutPipe[1], STDERR_FILENO);
             } else {
-                if (::dup2(stderrPipe[1], STDERR_FILENO) < 0) {
-                    childFail(doof_os::errnoMessage("Failed to map stderr"));
-                }
+                if (setupResult == 0) setupResult = ::posix_spawn_file_actions_adddup2(&actions, stderrPipe[1], STDERR_FILENO);
             }
-
-            if (withStdin) {
-                if (::dup2(stdinPipe[0], STDIN_FILENO) < 0) {
-                    childFail(doof_os::errnoMessage("Failed to map stdin"));
-                }
-            }
-
-            ::close(stdoutPipe[0]);
-            ::close(stdoutPipe[1]);
-
-            if (!mergeStderrIntoStdout) {
-                ::close(stderrPipe[0]);
-                ::close(stderrPipe[1]);
-            }
-
-            if (withStdin) {
-                ::close(stdinPipe[0]);
-                ::close(stdinPipe[1]);
-            }
-
-            if (cwd.has_value() && ::chdir(cwd->c_str()) != 0) {
-                childFail(doof_os::errnoMessage("Failed to set cwd"));
-            }
-
-            if (!inheritEnv) {
-                std::string clearError;
-                if (!doof_os::clearEnvironment(clearError)) {
-                    childFail(clearError);
-                }
-            }
-
-            for (size_t i = 0; i < keyCount; ++i) {
-                if (::setenv((*envKeys)[i].c_str(), (*envValues)[i].c_str(), 1) != 0) {
-                    childFail(doof_os::errnoMessage("Failed to set environment variable"));
-                }
-            }
-
-            std::vector<char*> argv;
-            argv.reserve((args == nullptr ? 0 : args->size()) + 2);
-            argv.push_back(const_cast<char*>(command.c_str()));
-            if (args != nullptr) {
-                for (const auto& arg : *args) {
-                    argv.push_back(const_cast<char*>(arg.c_str()));
-                }
-            }
-            argv.push_back(nullptr);
-
-            ::execvp(command.c_str(), argv.data());
-            childFail(doof_os::errnoMessage("Failed to exec process"));
+        }
+        if (setupResult == 0 && withStdin) setupResult = ::posix_spawn_file_actions_adddup2(&actions, stdinPipe[0], STDIN_FILENO);
+        if (setupResult == 0 && stdoutPipe[0] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stdoutPipe[0]);
+        if (setupResult == 0 && stdoutPipe[1] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stdoutPipe[1]);
+        if (setupResult == 0 && stderrPipe[0] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stderrPipe[0]);
+        if (setupResult == 0 && stderrPipe[1] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stderrPipe[1]);
+        if (setupResult == 0 && stdinPipe[0] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stdinPipe[0]);
+        if (setupResult == 0 && stdinPipe[1] >= 0) setupResult = ::posix_spawn_file_actions_addclose(&actions, stdinPipe[1]);
+        if (setupResult == 0 && cwd.has_value()) {
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            setupResult = ::posix_spawn_file_actions_addchdir_np(&actions, cwd->c_str());
+#if defined(__APPLE__) && defined(__clang__)
+#pragma clang diagnostic pop
+#endif
         }
 
-        ::close(execErrorPipe[1]);
-        ::close(stdoutPipe[1]);
+        posix_spawnattr_t attributes;
+        if (setupResult == 0) setupResult = ::posix_spawnattr_init(&attributes);
+        const bool attributesInitialized = setupResult == 0;
+        if (setupResult == 0) setupResult = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+        if (setupResult == 0) setupResult = ::posix_spawnattr_setpgroup(&attributes, 0);
 
-        if (!mergeStderrIntoStdout) {
-            ::close(stderrPipe[1]);
+        pid_t childPid = 0;
+        const int spawnResult = setupResult == 0
+            ? ::posix_spawnp(&childPid, command.c_str(), &actions, &attributes, argv.data(), envp.data())
+            : setupResult;
+        if (attributesInitialized) ::posix_spawnattr_destroy(&attributes);
+        if (actionsInitialized) ::posix_spawn_file_actions_destroy(&actions);
+
+        if (stdoutPipe[1] >= 0) ::close(stdoutPipe[1]);
+        if (stderrPipe[1] >= 0) ::close(stderrPipe[1]);
+        if (stdinPipe[0] >= 0) ::close(stdinPipe[0]);
+
+        if (spawnResult != 0) {
+            if (stdoutPipe[0] >= 0) ::close(stdoutPipe[0]);
+            if (stderrPipe[0] >= 0) ::close(stderrPipe[0]);
+            if (stdinPipe[1] >= 0) ::close(stdinPipe[1]);
+            return doof::Failure<std::string>{"Failed to spawn process: " + std::string(std::strerror(spawnResult))};
         }
 
-        if (withStdin) {
-            ::close(stdinPipe[0]);
-        }
-
-        std::string spawnError;
-        char errorBuffer[256];
-        while (true) {
-            const ssize_t readCount = ::read(execErrorPipe[0], errorBuffer, sizeof(errorBuffer));
-            if (readCount > 0) {
-                spawnError.append(errorBuffer, static_cast<size_t>(readCount));
-                continue;
-            }
-            if (readCount == 0) {
-                break;
-            }
-            if (errno == EINTR) {
-                continue;
-            }
-            break;
-        }
-        ::close(execErrorPipe[0]);
-
-        if (!spawnError.empty()) {
-            int status = 0;
-            (void)::waitpid(childPid, &status, 0);
-            ::close(stdoutPipe[0]);
-            if (!mergeStderrIntoStdout) {
-                ::close(stderrPipe[0]);
-            }
-            if (withStdin) {
-                ::close(stdinPipe[1]);
-            }
-            return doof::Failure<std::string>{spawnError};
-        }
-
-        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid, timeoutNanos));
+        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid, maxOutputBytes, timeoutNanos));
         process->stdoutFd_ = stdoutPipe[0];
-        process->stdoutOpen_ = true;
+        process->stdoutOpen_ = stdoutPipe[0] >= 0;
 
         if (mergeStderrIntoStdout) {
             process->stderrFd_ = -1;
             process->stderrOpen_ = false;
-        } else {
+        } else if (!inheritOutput) {
             process->stderrFd_ = stderrPipe[0];
             process->stderrOpen_ = true;
         }
@@ -600,6 +549,8 @@ public:
 
         const auto stdoutBytes = std::make_shared<std::vector<uint8_t>>();
         const auto stderrBytes = std::make_shared<std::vector<uint8_t>>();
+        bool stdoutTruncated = false;
+        bool stderrTruncated = false;
 
         if (stdinOpen_ && stdinFd_ >= 0) {
             (void)closeStdin();
@@ -607,10 +558,10 @@ public:
 
         while (stdoutOpen_ || stderrOpen_ || !exited_) {
             std::string readError;
-            if (!readAvailable(stdoutFd_, stdoutOpen_, *stdoutBytes, "stdout", readError)) {
+            if (!readAvailable(stdoutFd_, stdoutOpen_, *stdoutBytes, stdoutTruncated, maxOutputBytes_, "stdout", readError)) {
                 return doof::Failure<std::string>{readError};
             }
-            if (!readAvailable(stderrFd_, stderrOpen_, *stderrBytes, "stderr", readError)) {
+            if (!readAvailable(stderrFd_, stderrOpen_, *stderrBytes, stderrTruncated, maxOutputBytes_, "stderr", readError)) {
                 return doof::Failure<std::string>{readError};
             }
 
@@ -663,7 +614,9 @@ public:
             }
         }
 
-        const auto result = std::make_shared<NativeRunResult>(exitCode_, stdoutBytes, stderrBytes);
+        const auto result = std::make_shared<NativeRunResult>(
+            exitCode_, stdoutBytes, stderrBytes, stdoutTruncated, stderrTruncated
+        );
         return doof::Success<std::shared_ptr<NativeRunResult>>{result};
     }
 
@@ -688,9 +641,14 @@ public:
     }
 
 private:
-    explicit NativeExecProcess(pid_t childPid, std::optional<int64_t> timeoutNanos)
+    explicit NativeExecProcess(
+        pid_t childPid,
+        std::optional<int64_t> maxOutputBytes,
+        std::optional<int64_t> timeoutNanos
+    )
         : childPid_(childPid),
           startedAt_(std::chrono::steady_clock::now()),
+          maxOutputBytes_(maxOutputBytes),
           timeoutNanos_(timeoutNanos),
           stdoutFd_(-1),
           stderrFd_(-1),
@@ -715,6 +673,8 @@ private:
         int& fd,
         bool& isOpen,
         std::vector<uint8_t>& output,
+        bool& truncated,
+        const std::optional<int64_t>& maxOutputBytes,
         const std::string& name,
         std::string& error
     ) {
@@ -726,7 +686,13 @@ private:
         while (true) {
             const ssize_t bytesRead = ::read(fd, buffer, sizeof(buffer));
             if (bytesRead > 0) {
-                output.insert(output.end(), buffer, buffer + bytesRead);
+                size_t retained = static_cast<size_t>(bytesRead);
+                if (maxOutputBytes.has_value()) {
+                    const size_t limit = static_cast<size_t>(maxOutputBytes.value());
+                    retained = output.size() >= limit ? 0 : std::min(retained, limit - output.size());
+                    if (retained < static_cast<size_t>(bytesRead)) truncated = true;
+                }
+                output.insert(output.end(), buffer, buffer + retained);
                 continue;
             }
             if (bytesRead == 0) {
@@ -852,6 +818,7 @@ private:
 
     pid_t childPid_;
     std::chrono::steady_clock::time_point startedAt_;
+    std::optional<int64_t> maxOutputBytes_;
     std::optional<int64_t> timeoutNanos_;
     int stdoutFd_;
     int stderrFd_;

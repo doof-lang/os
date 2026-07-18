@@ -24,6 +24,8 @@
 - `inheritEnv: bool` - whether to inherit parent environment before overrides.
 - `withStdin: bool` - whether to open writable stdin for child process.
 - `mergeStderrIntoStdout: bool` - redirect stderr into stdout to simplify single-stream reading.
+- `inheritOutput: bool` - attach stdout and stderr to the parent instead of capturing them.
+- `maxOutputBytes: long | null` - retain at most this many bytes per captured stream while continuing to drain the child.
 - `timeout: Duration | null` - optional process timeout, measured from `Exec.spawn()`. `run()` and `wait()` terminate the process and return a failure when the timeout is reached.
 
 ## Exec
@@ -41,3 +43,5 @@
 - `stdoutStream()` and `stderrStream()` are blocking pull streams and return `null` on EOF.
 - `timeout` is enforced by `run()` and `wait()`; individual blocking stream reads do not wake up on the timeout by themselves.
 - If your child process writes heavily to stderr while you only consume stdout, use `mergeStderrIntoStdout: true` to avoid pipe backpressure deadlocks.
+- `ExecResult.stdoutTruncated` and `stderrTruncated` report when bounded capture discarded bytes.
+- POSIX child creation uses `posix_spawn`, so concurrent callers do not fork a multithreaded process.

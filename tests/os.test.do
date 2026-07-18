@@ -67,6 +67,39 @@ export function testRunCapturesStdoutAndStderr(): void {
   assert(bytesToString(result!.stderr) == "err", "expected stderr to be captured")
 }
 
+export function testRunBoundsCapturedOutputWhileDrainingToCompletion(): void {
+  result := try! run(
+    "/bin/sh",
+    ["-c", "printf 'abcdef'; printf 'ghijkl' 1>&2"],
+    ExecOptions { mergeStderrIntoStdout: true, maxOutputBytes: 5L },
+  )
+
+  assert(result.exitCode == 0, "expected bounded command to complete")
+  assert(bytesToString(result.stdout) == "abcde", "expected capture to stop at the configured byte limit")
+  assert(result.stdoutTruncated, "expected bounded stdout to report truncation")
+  assert(result.stderr.length == 0, "expected merged stderr to leave the stderr capture empty")
+  assert(!result.stderrTruncated, "expected the unused stderr capture not to report truncation")
+}
+
+class ConcurrentCommandRunner {
+  command: string
+
+  execute(): int {
+    return (try! run("/bin/sh", ["-c", this.command], ExecOptions { withStdin: false })).exitCode
+  }
+}
+
+export function testConcurrentRunsUseThreadSafeSpawning(): void {
+  first := Actor<ConcurrentCommandRunner>("sleep 0.02")
+  second := Actor<ConcurrentCommandRunner>("sleep 0.02")
+  firstResult := async first.execute()
+  secondResult := async second.execute()
+  assert(try! firstResult.get() == 0, "expected first concurrent command to succeed")
+  assert(try! secondResult.get() == 0, "expected second concurrent command to succeed")
+  retire first
+  retire second
+}
+
 export function testRunAllowsCommandToCompleteBeforeTimeout(): void {
   let result: ExecResult | null = null
   options := ExecOptions {

@@ -83,6 +83,8 @@ Fields:
 - `inheritEnv: bool = true` starts from the parent environment before applying `env`.
 - `withStdin: bool = true` opens a writable stdin pipe.
 - `mergeStderrIntoStdout: bool = false` redirects stderr into stdout.
+- `inheritOutput: bool = false` attaches child output directly to the parent process.
+- `maxOutputBytes: long | null = null` bounds retained bytes per captured stream while still draining all child output.
 - `timeout: Duration | null = null` sets an optional process timeout.
 
 Defined in [index.do](../index.do).
@@ -121,6 +123,8 @@ Fields:
 - `exitCode: int`
 - `stdout: readonly byte[]`
 - `stderr: readonly byte[]`
+- `stdoutTruncated: bool`
+- `stderrTruncated: bool`
 
 Defined in [index.do](../index.do).
 
@@ -130,6 +134,9 @@ Defined in [index.do](../index.do).
 export function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string>
 ```
 
-Run a child process to completion and collect stdout and stderr.
+Run a child process to completion and collect stdout and stderr. When
+`maxOutputBytes` is set, capture stops growing at the limit but the pipes keep
+draining so the child cannot deadlock. Use `inheritOutput` when output should
+remain attached to the invoking terminal.
 
 Defined in [index.do](../index.do).

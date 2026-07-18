@@ -1,12 +1,12 @@
 import { Duration } from "std/time"
 
-import function _env(name: string): Result<string, string> from "native_os.hpp" as doof_os::env
-import function _pid(): int from "native_os.hpp" as doof_os::pid
-import function _platform(): string from "native_os.hpp" as doof_os::platform
-import function _architecture(): string from "native_os.hpp" as doof_os::architecture
+import isolated function _env(name: string): Result<string, string> from "native_os.hpp" as doof_os::env
+import isolated function _pid(): int from "native_os.hpp" as doof_os::pid
+import isolated function _platform(): string from "native_os.hpp" as doof_os::platform
+import isolated function _architecture(): string from "native_os.hpp" as doof_os::architecture
 
 import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
-  static spawn(
+  isolated static spawn(
     command: string,
     args: string[],
     cwd: string | null,
@@ -15,25 +15,29 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
     inheritEnv: bool,
     withStdin: bool,
     mergeStderrIntoStdout: bool,
+    inheritOutput: bool,
+    maxOutputBytes: long | null,
     timeoutNanos: long | null
   ): Result<NativeExecProcess, string>
 
-  nextStdoutChunk(): readonly byte[] | null
-  nextStderrChunk(): readonly byte[] | null
-  writeStdinText(value: string): Result<void, string>
-  closeStdin(): Result<void, string>
-  isRunning(): bool
-  wait(): Result<int, string>
-  runToCompletion(): Result<NativeRunResult, string>
-  terminate(signal: int): Result<void, string>
-  stdoutOpen(): bool
-  stderrOpen(): bool
+  isolated nextStdoutChunk(): readonly byte[] | null
+  isolated nextStderrChunk(): readonly byte[] | null
+  isolated writeStdinText(value: string): Result<void, string>
+  isolated closeStdin(): Result<void, string>
+  isolated isRunning(): bool
+  isolated wait(): Result<int, string>
+  isolated runToCompletion(): Result<NativeRunResult, string>
+  isolated terminate(signal: int): Result<void, string>
+  isolated stdoutOpen(): bool
+  isolated stderrOpen(): bool
 }
 
 import class NativeRunResult from "native_os.hpp" {
-  exitCode(): int
-  stdout(): readonly byte[]
-  stderr(): readonly byte[]
+  isolated exitCode(): int
+  isolated stdout(): readonly byte[]
+  isolated stderr(): readonly byte[]
+  isolated stdoutTruncated(): bool
+  isolated stderrTruncated(): bool
 }
 
 export function env(name: string): Result<string, string> {
@@ -58,10 +62,12 @@ export class ExecOptions {
   readonly inheritEnv: bool = true
   readonly withStdin: bool = true
   readonly mergeStderrIntoStdout: bool = false
+  readonly inheritOutput: bool = false
+  readonly maxOutputBytes: long | null = null
   readonly timeout: Duration | null = null
 }
 
-function spawnNative(command: string, args: string[], options: ExecOptions): Result<NativeExecProcess, string> {
+isolated function spawnNative(command: string, args: string[], options: ExecOptions): Result<NativeExecProcess, string> {
   envKeys: string[] := []
   envValues: string[] := []
   for key, value of options.env {
@@ -83,6 +89,8 @@ function spawnNative(command: string, args: string[], options: ExecOptions): Res
     options.inheritEnv,
     options.withStdin,
     options.mergeStderrIntoStdout,
+    options.inheritOutput,
+    options.maxOutputBytes,
     timeoutNanos,
   )
 }
@@ -188,9 +196,11 @@ export class ExecResult {
   readonly exitCode: int
   readonly stdout: readonly byte[]
   readonly stderr: readonly byte[]
+  readonly stdoutTruncated: bool = false
+  readonly stderrTruncated: bool = false
 }
 
-export function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
+export isolated function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
   let proc: NativeExecProcess | null = null
   case spawnNative(command, args, options) {
     s: Success -> {
@@ -205,21 +215,18 @@ export function run(command: string, args: string[] = [], options: ExecOptions =
 
   assert(proc != null, "expected Exec.spawn success case to initialize proc")
 
-  case proc!.runToCompletion() {
-    s: Success -> {
-      nativeResult := s.value
-      return Success {
-        value: ExecResult {
-          exitCode: nativeResult.exitCode(),
-          stdout: nativeResult.stdout(),
-          stderr: nativeResult.stderr()
-        }
+  return case proc!.runToCompletion() {
+    s: Success -> Success {
+      value: ExecResult {
+        exitCode: s.value.exitCode(),
+        stdout: s.value.stdout(),
+        stderr: s.value.stderr(),
+        stdoutTruncated: s.value.stdoutTruncated(),
+        stderrTruncated: s.value.stderrTruncated()
       }
-    }
-    f: Failure -> {
-      return Failure {
-        error: f.error
-      }
+    },
+    f: Failure -> Failure {
+      error: f.error
     }
   }
 }
