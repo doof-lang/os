@@ -9,25 +9,25 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
   isolated static spawn(
     command: string,
     args: string[],
-    cwd: string | null,
+    cwd: string | none,
     envKeys: string[],
     envValues: string[],
     inheritEnv: bool,
     withStdin: bool,
     mergeStderrIntoStdout: bool,
     inheritOutput: bool,
-    maxOutputBytes: long | null,
-    timeoutNanos: long | null
+    maxOutputBytes: long | none,
+    timeoutNanos: long | none
   ): Result<NativeExecProcess, string>
 
-  isolated nextStdoutChunk(): readonly byte[] | null
-  isolated nextStderrChunk(): readonly byte[] | null
-  isolated writeStdinText(value: string): Result<void, string>
-  isolated closeStdin(): Result<void, string>
+  isolated nextStdoutChunk(): readonly byte[] | none
+  isolated nextStderrChunk(): readonly byte[] | none
+  isolated writeStdinText(value: string): Result<none, string>
+  isolated closeStdin(): Result<none, string>
   isolated isRunning(): bool
   isolated wait(): Result<int, string>
   isolated runToCompletion(): Result<NativeRunResult, string>
-  isolated terminate(signal: int): Result<void, string>
+  isolated terminate(signal: int): Result<none, string>
   isolated stdoutOpen(): bool
   isolated stderrOpen(): bool
 }
@@ -57,14 +57,14 @@ export function architecture(): string {
 }
 
 export class ExecOptions {
-  readonly cwd: string | null = null
+  readonly cwd: string | none = none
   readonly env: Map<string, string> = {}
   readonly inheritEnv: bool = true
   readonly withStdin: bool = true
   readonly mergeStderrIntoStdout: bool = false
   readonly inheritOutput: bool = false
-  readonly maxOutputBytes: long | null = null
-  readonly timeout: Duration | null = null
+  readonly maxOutputBytes: long | none = none
+  readonly timeout: Duration | none = none
 }
 
 isolated function spawnNative(command: string, args: string[], options: ExecOptions): Result<NativeExecProcess, string> {
@@ -75,8 +75,8 @@ isolated function spawnNative(command: string, args: string[], options: ExecOpti
     envValues.push(value)
   }
 
-  let timeoutNanos: long | null = null
-  if options.timeout != null {
+  let timeoutNanos: long | none = none
+  if options.timeout != none {
     timeoutNanos = options.timeout!.toNanos()
   }
 
@@ -101,7 +101,7 @@ class ExecStdoutStream implements Stream<readonly byte[]> {
 
   next(): bool {
     chunk := this.process.nextStdoutChunk()
-    if chunk == null {
+    if chunk == none {
       return false
     }
     this.currentValue = chunk!
@@ -117,7 +117,7 @@ class ExecStderrStream implements Stream<readonly byte[]> {
 
   next(): bool {
     chunk := this.process.nextStderrChunk()
-    if chunk == null {
+    if chunk == none {
       return false
     }
     this.currentValue = chunk!
@@ -155,19 +155,19 @@ export class Exec {
     }
   }
 
-  nextStdoutChunk(): readonly byte[] | null {
+  nextStdoutChunk(): readonly byte[] | none {
     return this.native.nextStdoutChunk()
   }
 
-  nextStderrChunk(): readonly byte[] | null {
+  nextStderrChunk(): readonly byte[] | none {
     return this.native.nextStderrChunk()
   }
 
-  writeStdinText(value: string): Result<void, string> {
+  writeStdinText(value: string): Result<none, string> {
     return this.native.writeStdinText(value)
   }
 
-  closeStdin(): Result<void, string> {
+  closeStdin(): Result<none, string> {
     return this.native.closeStdin()
   }
 
@@ -179,7 +179,7 @@ export class Exec {
     return this.native.wait()
   }
 
-  terminate(signal: int = 15): Result<void, string> {
+  terminate(signal: int = 15): Result<none, string> {
     return this.native.terminate(signal)
   }
 
@@ -201,7 +201,7 @@ export class ExecResult {
 }
 
 export isolated function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
-  let proc: NativeExecProcess | null = null
+  let proc: NativeExecProcess | none = none
   case spawnNative(command, args, options) {
     s: Success -> {
       proc = s.value
@@ -213,7 +213,7 @@ export isolated function run(command: string, args: string[] = [], options: Exec
     }
   }
 
-  assert(proc != null, "expected Exec.spawn success case to initialize proc")
+  assert(proc != none, "expected Exec.spawn success case to initialize proc")
 
   return case proc!.runToCompletion() {
     s: Success -> Success {

@@ -15,7 +15,7 @@ function collectStream(stream: Stream<readonly byte[]>): readonly byte[] {
   return builder.build()
 }
 
-function assertSuccessVoid(result: Result<void, string>, context: string): void {
+function assertSuccessVoid(result: Result<none, string>, context: string): none {
   case result {
     _: Success -> {}
     f: Failure -> {
@@ -24,7 +24,7 @@ function assertSuccessVoid(result: Result<void, string>, context: string): void 
   }
 }
 
-export function testEnvReadsKnownVariable(): void {
+export function testEnvReadsKnownVariable(): none {
   home := env("HOME")
   let value = ""
   case home {
@@ -38,14 +38,14 @@ export function testEnvReadsKnownVariable(): void {
   assert(value.length > 0, "expected HOME to be present and non-empty")
 }
 
-export function testPidPlatformArchitectureLookReasonable(): void {
+export function testPidPlatformArchitectureLookReasonable(): none {
   assert(pid() > 0, "expected pid to be positive")
   assert(platform().length > 0, "expected platform to be non-empty")
   assert(architecture().length > 0, "expected architecture to be non-empty")
 }
 
-export function testRunCapturesStdoutAndStderr(): void {
-  let result: ExecResult | null = null
+export function testRunCapturesStdoutAndStderr(): none {
+  let result: ExecResult | none = none
   defaultOptions := ExecOptions {}
   case run(
     "/bin/sh",
@@ -60,14 +60,14 @@ export function testRunCapturesStdoutAndStderr(): void {
     }
   }
 
-  assert(result != null, "expected run() to produce a result")
+  assert(result != none, "expected run() to produce a result")
 
   assert(result!.exitCode == 0, "expected shell command to exit successfully")
   assert(bytesToString(result!.stdout) == "out", "expected stdout to be captured")
   assert(bytesToString(result!.stderr) == "err", "expected stderr to be captured")
 }
 
-export function testRunBoundsCapturedOutputWhileDrainingToCompletion(): void {
+export function testRunBoundsCapturedOutputWhileDrainingToCompletion(): none {
   result := try! run(
     "/bin/sh",
     ["-c", "printf 'abcdef'; printf 'ghijkl' 1>&2"],
@@ -89,7 +89,7 @@ class ConcurrentCommandRunner {
   }
 }
 
-export function testConcurrentRunsUseThreadSafeSpawning(): void {
+export function testConcurrentRunsUseThreadSafeSpawning(): none {
   first := Actor<ConcurrentCommandRunner>("sleep 0.02")
   second := Actor<ConcurrentCommandRunner>("sleep 0.02")
   firstResult := async first.execute()
@@ -100,8 +100,8 @@ export function testConcurrentRunsUseThreadSafeSpawning(): void {
   retire second
 }
 
-export function testRunAllowsCommandToCompleteBeforeTimeout(): void {
-  let result: ExecResult | null = null
+export function testRunAllowsCommandToCompleteBeforeTimeout(): none {
+  let result: ExecResult | none = none
   options := ExecOptions {
     timeout: Duration.ofSeconds(1L)
   }
@@ -119,12 +119,12 @@ export function testRunAllowsCommandToCompleteBeforeTimeout(): void {
     }
   }
 
-  assert(result != null, "expected run() to produce a result")
+  assert(result != none, "expected run() to produce a result")
   assert(result!.exitCode == 0, "expected shell command to exit successfully")
   assert(bytesToString(result!.stdout) == "done", "expected stdout to be captured")
 }
 
-export function testRunTimesOutLongCommand(): void {
+export function testRunTimesOutLongCommand(): none {
   options := ExecOptions {
     timeout: Duration.ofMillis(50L)
   }
@@ -143,8 +143,8 @@ export function testRunTimesOutLongCommand(): void {
   }
 }
 
-export function testSpawnedProcessWaitUsesTimeout(): void {
-  let proc: Exec | null = null
+export function testSpawnedProcessWaitUsesTimeout(): none {
+  let proc: Exec | none = none
   options := ExecOptions {
     timeout: Duration.ofMillis(50L)
   }
@@ -158,7 +158,7 @@ export function testSpawnedProcessWaitUsesTimeout(): void {
     }
   }
 
-  assert(proc != null, "expected Exec.spawn to produce a process")
+  assert(proc != none, "expected Exec.spawn to produce a process")
 
   case proc!.wait() {
     s: Success -> {
@@ -170,7 +170,7 @@ export function testSpawnedProcessWaitUsesTimeout(): void {
   }
 }
 
-export function testExecSupportsCwdAndEnvOverride(): void {
+export function testExecSupportsCwdAndEnvOverride(): none {
   options := ExecOptions {
     cwd: tempDirectory(),
     env: {
@@ -178,7 +178,7 @@ export function testExecSupportsCwdAndEnvOverride(): void {
     }
   }
 
-  let result: ExecResult | null = null
+  let result: ExecResult | none = none
   case run(
     "/bin/sh",
     ["-c", "pwd; printf '%s' \"$DOOF_OS_TEST\""],
@@ -192,7 +192,7 @@ export function testExecSupportsCwdAndEnvOverride(): void {
     }
   }
 
-  assert(result != null, "expected run() to produce a result")
+  assert(result != none, "expected run() to produce a result")
 
   output := bytesToString(result!.stdout)
   lines := output.split("\n")
@@ -202,8 +202,8 @@ export function testExecSupportsCwdAndEnvOverride(): void {
   assert(lines[lines.length - 1] == "present", "expected env override to be visible in child process")
 }
 
-export function testExecStdinPushAndStreaming(): void {
-  let proc: Exec | null = null
+export function testExecStdinPushAndStreaming(): none {
+  let proc: Exec | none = none
   defaultOptions := ExecOptions {}
   case Exec.spawn("/bin/sh", ["-c", "cat"], defaultOptions) {
     s: Success -> {
@@ -214,7 +214,7 @@ export function testExecStdinPushAndStreaming(): void {
     }
   }
 
-  assert(proc != null, "expected Exec.spawn to produce a process")
+  assert(proc != none, "expected Exec.spawn to produce a process")
 
   assertSuccessVoid(proc!.writeStdinText("alpha\\n"), "expected first stdin write to succeed")
   assertSuccessVoid(proc!.writeStdinText("beta\\n"), "expected second stdin write to succeed")
