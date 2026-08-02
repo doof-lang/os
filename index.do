@@ -97,7 +97,7 @@ isolated function spawnNative(command: string, args: string[], options: ExecOpti
 
 class ExecStdoutStream implements Stream<readonly byte[]> {
   process: NativeExecProcess
-  currentValue: readonly byte[] = []
+  let currentValue: readonly byte[] = []
 
   next(): bool {
     chunk := this.process.nextStdoutChunk()
@@ -113,7 +113,7 @@ class ExecStdoutStream implements Stream<readonly byte[]> {
 
 class ExecStderrStream implements Stream<readonly byte[]> {
   process: NativeExecProcess
-  currentValue: readonly byte[] = []
+  let currentValue: readonly byte[] = []
 
   next(): bool {
     chunk := this.process.nextStderrChunk()
