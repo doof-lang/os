@@ -1,5 +1,11 @@
 #pragma once
 
+#if defined(_WIN32)
+
+#include "native_os_windows.hpp"
+
+#else
+
 #include "doof_runtime.hpp"
 
 #include <algorithm>
@@ -829,3 +835,5 @@ private:
     bool exited_;
     int32_t exitCode_;
 };
+
+#endif

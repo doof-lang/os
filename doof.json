@@ -5,7 +5,8 @@
   "build": {
     "native": {
       "extraCopyPaths": [
-        "./native_os.hpp"
+        "./native_os.hpp",
+        "./native_os_windows.hpp"
       ]
     }
   },
