@@ -5,6 +5,11 @@ import isolated function _pid(): int from "native_os.hpp" as doof_os::pid
 import isolated function _platform(): string from "native_os.hpp" as doof_os::platform
 import isolated function _architecture(): string from "native_os.hpp" as doof_os::architecture
 
+export enum ProcessGroupMode {
+  Isolated,
+  Inherited,
+}
+
 import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
   isolated static spawn(
     command: string,
@@ -16,6 +21,7 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
     withStdin: bool,
     mergeStderrIntoStdout: bool,
     inheritOutput: bool,
+    isolatedProcessGroup: bool,
     maxOutputBytes: long | none,
     timeoutNanos: long | none
   ): Result<NativeExecProcess, string>
@@ -63,6 +69,7 @@ export class ExecOptions {
   readonly withStdin: bool = true
   readonly mergeStderrIntoStdout: bool = false
   readonly inheritOutput: bool = false
+  readonly processGroupMode: ProcessGroupMode = .Isolated
   readonly maxOutputBytes: long | none = none
   readonly timeout: Duration | none = none
 }
@@ -90,6 +97,7 @@ isolated function spawnNative(command: string, args: string[], options: ExecOpti
     options.withStdin,
     options.mergeStderrIntoStdout,
     options.inheritOutput,
+    options.processGroupMode == .Isolated,
     options.maxOutputBytes,
     timeoutNanos,
   )

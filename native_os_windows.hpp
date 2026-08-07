@@ -198,7 +198,8 @@ public:
         const std::string& command, const std::shared_ptr<std::vector<std::string>>& args,
         const std::optional<std::string>& cwd, const std::shared_ptr<std::vector<std::string>>& envKeys,
         const std::shared_ptr<std::vector<std::string>>& envValues, bool inheritEnv, bool withStdin,
-        bool mergeStderrIntoStdout, bool inheritOutput, const std::optional<int64_t>& maxOutputBytes,
+        bool mergeStderrIntoStdout, bool inheritOutput, bool isolatedProcessGroup,
+        const std::optional<int64_t>& maxOutputBytes,
         const std::optional<int64_t>& timeoutNanos
     ) {
         if (command.empty()) return doof::Failure<std::string>{"Command cannot be empty"};
@@ -257,8 +258,10 @@ public:
         startup.hStdOutput = inheritOutput ? ::GetStdHandle(STD_OUTPUT_HANDLE) : stdoutWrite;
         startup.hStdError = inheritOutput ? ::GetStdHandle(STD_ERROR_HANDLE) : (mergeStderrIntoStdout ? stdoutWrite : stderrWrite);
         PROCESS_INFORMATION info{};
+        const DWORD creationFlags = CREATE_UNICODE_ENVIRONMENT |
+            (isolatedProcessGroup ? CREATE_NEW_PROCESS_GROUP : 0);
         const BOOL created = ::CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, TRUE,
-            CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP, doof::success_value(environment).data(),
+            creationFlags, doof::success_value(environment).data(),
             wideCwd.has_value() ? wideCwd->c_str() : nullptr, &startup, &info);
         doof_os::closeHandle(stdoutWrite); doof_os::closeHandle(stderrWrite); doof_os::closeHandle(stdinRead);
         if (!created) return fail(doof_os::windowsError("Failed to spawn process"));

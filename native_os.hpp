@@ -246,6 +246,7 @@ public:
         bool withStdin,
         bool mergeStderrIntoStdout,
         bool inheritOutput,
+        bool isolatedProcessGroup,
         const std::optional<int64_t>& maxOutputBytes,
         const std::optional<int64_t>& timeoutNanos
     ) {
@@ -379,8 +380,10 @@ public:
         posix_spawnattr_t attributes;
         if (setupResult == 0) setupResult = ::posix_spawnattr_init(&attributes);
         const bool attributesInitialized = setupResult == 0;
-        if (setupResult == 0) setupResult = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
-        if (setupResult == 0) setupResult = ::posix_spawnattr_setpgroup(&attributes, 0);
+        if (setupResult == 0 && isolatedProcessGroup) {
+            setupResult = ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+            if (setupResult == 0) setupResult = ::posix_spawnattr_setpgroup(&attributes, 0);
+        }
 
         pid_t childPid = 0;
         const int spawnResult = setupResult == 0
@@ -400,7 +403,9 @@ public:
             return doof::Failure<std::string>{"Failed to spawn process: " + std::string(std::strerror(spawnResult))};
         }
 
-        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(childPid, maxOutputBytes, timeoutNanos));
+        auto process = std::shared_ptr<NativeExecProcess>(new NativeExecProcess(
+            childPid, isolatedProcessGroup, maxOutputBytes, timeoutNanos
+        ));
         process->stdoutFd_ = stdoutPipe[0];
         process->stdoutOpen_ = stdoutPipe[0] >= 0;
 
@@ -649,10 +654,12 @@ public:
 private:
     explicit NativeExecProcess(
         pid_t childPid,
+        bool isolatedProcessGroup,
         std::optional<int64_t> maxOutputBytes,
         std::optional<int64_t> timeoutNanos
     )
         : childPid_(childPid),
+          isolatedProcessGroup_(isolatedProcessGroup),
           startedAt_(std::chrono::steady_clock::now()),
           maxOutputBytes_(maxOutputBytes),
           timeoutNanos_(timeoutNanos),
@@ -784,7 +791,8 @@ private:
 
     void killTimedOutProcess() {
         if (!exited_ && childPid_ > 0) {
-            (void)::kill(-childPid_, SIGTERM);
+            const pid_t signalTarget = isolatedProcessGroup_ ? -childPid_ : childPid_;
+            (void)::kill(signalTarget, SIGTERM);
             for (int i = 0; i < 100; ++i) {
                 reapChildNoHang();
                 if (exited_) {
@@ -793,7 +801,7 @@ private:
                 usleep(1000);
             }
             if (!exited_) {
-                (void)::kill(-childPid_, SIGKILL);
+                (void)::kill(signalTarget, SIGKILL);
                 int status = 0;
                 while (true) {
                     const pid_t waited = ::waitpid(childPid_, &status, 0);
@@ -823,6 +831,7 @@ private:
     }
 
     pid_t childPid_;
+    bool isolatedProcessGroup_;
     std::chrono::steady_clock::time_point startedAt_;
     std::optional<int64_t> maxOutputBytes_;
     std::optional<int64_t> timeoutNanos_;

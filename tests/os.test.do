@@ -1,7 +1,7 @@
 import { BlobBuilder, BlobReader } from "std/blob"
 import { tempDirectory } from "std/path"
 import { Duration } from "std/time"
-import { Exec, ExecOptions, ExecResult, architecture, env, pid, platform, run } from "../index"
+import { Exec, ExecOptions, ExecResult, ProcessGroupMode, architecture, env, pid, platform, run } from "../index"
 
 function bytesToString(data: readonly byte[]): string {
   return BlobReader(data).readString(long(data.length))
@@ -98,6 +98,63 @@ export function testConcurrentRunsUseThreadSafeSpawning(): none {
   assert(try! secondResult.get() == 0, "expected second concurrent command to succeed")
   retire first
   retire second
+}
+
+function processGroupId(processId: int): string {
+  result := try! run(
+    "/bin/ps",
+    ["-o", "pgid=", "-p", string(processId)],
+    ExecOptions { withStdin: false },
+  )
+  assert(result.exitCode == 0, "expected ps to report the process group")
+  return bytesToString(result.stdout).trim()
+}
+
+function childProcessGroupId(mode: ProcessGroupMode): string {
+  result := try! run(
+    "/bin/sh",
+    ["-c", "ps -o pgid= -p $$"],
+    ExecOptions { withStdin: false, processGroupMode: mode },
+  )
+  assert(result.exitCode == 0, "expected child shell to report its process group")
+  return bytesToString(result.stdout).trim()
+}
+
+function defaultChildProcessGroupId(): string {
+  result := try! run(
+    "/bin/sh",
+    ["-c", "ps -o pgid= -p $$"],
+    ExecOptions { withStdin: false },
+  )
+  assert(result.exitCode == 0, "expected child shell to report its process group")
+  return bytesToString(result.stdout).trim()
+}
+
+export function testProcessGroupModeControlsChildMembership(): none {
+  parentGroup := processGroupId(pid())
+  assert(defaultChildProcessGroupId() != parentGroup, "expected the default isolated child process group")
+  assert(childProcessGroupId(.Isolated) != parentGroup, "expected the explicit isolated child process group")
+  assert(childProcessGroupId(.Inherited) == parentGroup, "expected the child to inherit the caller process group")
+}
+
+export function testInheritedProcessGroupTimeoutDoesNotSignalCaller(): none {
+  result := run(
+    "/bin/sh",
+    ["-c", "sleep 1"],
+    ExecOptions {
+      withStdin: false,
+      processGroupMode: .Inherited,
+      timeout: Duration.ofMillis(50L),
+    },
+  )
+  case result {
+    s: Success -> {
+      assert(false, "expected inherited-group command to time out with exit code " + string(s.value.exitCode))
+    }
+    f: Failure -> {
+      assert(f.error.contains("timed out"), "expected timeout failure without signalling the caller")
+    }
+  }
 }
 
 export function testRunAllowsCommandToCompleteBeforeTimeout(): none {

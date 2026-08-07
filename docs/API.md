@@ -70,6 +70,15 @@ export function architecture(): string
 
 Defined in [index.do](../index.do).
 
+### `ProcessGroupMode`
+
+```doof
+export enum ProcessGroupMode {
+  Isolated,
+  Inherited,
+}
+```
+
 ### `ExecOptions`
 
 ```doof
@@ -84,10 +93,16 @@ Fields:
 - `withStdin: bool = true` opens a writable stdin pipe.
 - `mergeStderrIntoStdout: bool = false` redirects stderr into stdout.
 - `inheritOutput: bool = false` attaches child output directly to the parent process.
+- `processGroupMode: ProcessGroupMode = .Isolated` creates a separate process group by default. Use `.Inherited` for terminal-attached interactive children that must remain in the caller's foreground process group.
 - `maxOutputBytes: long | null = null` bounds retained bytes per captured stream while still draining all child output.
 - `timeout: Duration | null = null` sets an optional process timeout.
 
 Defined in [index.do](../index.do).
+
+`ProcessGroupMode` controls process-group membership, independently of stdin and
+output routing. `.Isolated` supports process-group cleanup on timeout, while
+`.Inherited` causes timeout cleanup to signal only the child process. It does
+not provide shell-style background execution or terminal job control.
 
 ### `Exec`
 
