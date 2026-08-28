@@ -29,6 +29,10 @@ println("exit: ${result.exitCode}")
 available. `pid()`, `platform()`, and `architecture()` query the current process
 and runtime platform.
 
+`platform()` returns `darwin`, `linux`, or `windows` on supported hosts.
+`architecture()` reports `x64`, `x86`, `arm64`, or `arm`, and additionally
+recognizes Linux `riscv64`, `ppc64`, `ppc64le`, `s390x`, and `loong64` hosts.
+
 ## Running Commands
 
 Use `run(command, args, options)` for the common case. It spawns the child,

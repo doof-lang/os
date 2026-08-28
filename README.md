@@ -48,3 +48,7 @@
 - `ExecResult.stdoutTruncated` and `stderrTruncated` report when bounded capture discarded bytes.
 - POSIX child creation uses `posix_spawn`, so concurrent callers do not fork a multithreaded process.
 - `ProcessGroupMode.Inherited` controls process-group membership only; it does not implement shell-style background execution or terminal job control.
+- Linux uses the POSIX process backend with `posix_spawn`, `poll`, process-group
+  signaling, working-directory actions, and environment overrides. Reported
+  Linux architectures include x64, x86, arm64, arm, riscv64, ppc64/ppc64le,
+  s390x, and loong64.

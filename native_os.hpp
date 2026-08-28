@@ -82,6 +82,18 @@ inline std::string architecture() {
     return "arm";
 #elif defined(__i386__)
     return "x86";
+#elif defined(__riscv) && __riscv_xlen == 64
+    return "riscv64";
+#elif defined(__powerpc64__) || defined(__ppc64__)
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    return "ppc64le";
+#else
+    return "ppc64";
+#endif
+#elif defined(__s390x__)
+    return "s390x";
+#elif defined(__loongarch64)
+    return "loong64";
 #else
     return "unknown";
 #endif

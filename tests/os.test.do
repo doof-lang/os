@@ -40,8 +40,13 @@ export function testEnvReadsKnownVariable(): none {
 
 export function testPidPlatformArchitectureLookReasonable(): none {
   assert(pid() > 0, "expected pid to be positive")
-  assert(platform().length > 0, "expected platform to be non-empty")
-  assert(architecture().length > 0, "expected architecture to be non-empty")
+  runtimePlatform := platform()
+  runtimeArchitecture := architecture()
+  assert(
+    runtimePlatform == "darwin" || runtimePlatform == "linux" || runtimePlatform == "windows",
+    "expected platform to identify a supported host",
+  )
+  assert(runtimeArchitecture != "unknown", "expected architecture to identify the host CPU")
 }
 
 export function testRunCapturesStdoutAndStderr(): none {
