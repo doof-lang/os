@@ -180,8 +180,8 @@ public:
         : exitCode_(exitCode), stdout_(std::move(stdoutBytes)), stderr_(std::move(stderrBytes)),
           stdoutTruncated_(stdoutTruncated), stderrTruncated_(stderrTruncated) {}
     int32_t exitCode() const { return exitCode_; }
-    std::shared_ptr<std::vector<uint8_t>> stdout() const { return stdout_; }
-    std::shared_ptr<std::vector<uint8_t>> stderr() const { return stderr_; }
+    std::shared_ptr<std::vector<uint8_t>> standardOutput() const { return stdout_; }
+    std::shared_ptr<std::vector<uint8_t>> standardError() const { return stderr_; }
     bool stdoutTruncated() const { return stdoutTruncated_; }
     bool stderrTruncated() const { return stderrTruncated_; }
 private:

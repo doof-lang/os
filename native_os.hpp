@@ -227,11 +227,11 @@ public:
         return exitCode_;
     }
 
-    std::shared_ptr<std::vector<uint8_t>> stdout() const {
+    std::shared_ptr<std::vector<uint8_t>> standardOutput() const {
         return stdout_;
     }
 
-    std::shared_ptr<std::vector<uint8_t>> stderr() const {
+    std::shared_ptr<std::vector<uint8_t>> standardError() const {
         return stderr_;
     }
 

@@ -40,8 +40,8 @@ import class NativeExecProcess from "native_os.hpp" as NativeExecProcess {
 
 import class NativeRunResult from "native_os.hpp" {
   isolated exitCode(): int
-  isolated stdout(): readonly byte[]
-  isolated stderr(): readonly byte[]
+  isolated standardOutput(): readonly byte[]
+  isolated standardError(): readonly byte[]
   isolated stdoutTruncated(): bool
   isolated stderrTruncated(): bool
 }
@@ -227,8 +227,8 @@ export isolated function run(command: string, args: string[] = [], options: Exec
     s: Success -> Success {
       value: ExecResult {
         exitCode: s.value.exitCode(),
-        stdout: s.value.stdout(),
-        stderr: s.value.stderr(),
+        stdout: s.value.standardOutput(),
+        stderr: s.value.standardError(),
         stdoutTruncated: s.value.stdoutTruncated(),
         stderrTruncated: s.value.stderrTruncated()
       }
