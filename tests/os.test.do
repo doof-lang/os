@@ -73,11 +73,11 @@ export function testRunCapturesStdoutAndStderr(): none {
 }
 
 export function testRunBoundsCapturedOutputWhileDrainingToCompletion(): none {
-  result := try! run(
+  result := run(
     "/bin/sh",
     ["-c", "printf 'abcdef'; printf 'ghijkl' 1>&2"],
     ExecOptions { mergeStderrIntoStdout: true, maxOutputBytes: 5L },
-  )
+  )!
 
   assert(result.exitCode == 0, "expected bounded command to complete")
   assert(bytesToString(result.stdout) == "abcde", "expected capture to stop at the configured byte limit")
@@ -90,7 +90,7 @@ class ConcurrentCommandRunner {
   command: string
 
   execute(): int {
-    return (try! run("/bin/sh", ["-c", this.command], ExecOptions { withStdin: false })).exitCode
+    return (run("/bin/sh", ["-c", this.command], ExecOptions { withStdin: false })!).exitCode
   }
 }
 
@@ -99,38 +99,38 @@ export function testConcurrentRunsUseThreadSafeSpawning(): none {
   second := Actor<ConcurrentCommandRunner>("sleep 0.02")
   firstResult := async first.execute()
   secondResult := async second.execute()
-  assert(try! firstResult.get() == 0, "expected first concurrent command to succeed")
-  assert(try! secondResult.get() == 0, "expected second concurrent command to succeed")
+  assert(firstResult.get()! == 0, "expected first concurrent command to succeed")
+  assert(secondResult.get()! == 0, "expected second concurrent command to succeed")
   retire first
   retire second
 }
 
 function processGroupId(processId: int): string {
-  result := try! run(
+  result := run(
     "/bin/ps",
     ["-o", "pgid=", "-p", string(processId)],
     ExecOptions { withStdin: false },
-  )
+  )!
   assert(result.exitCode == 0, "expected ps to report the process group")
   return bytesToString(result.stdout).trim()
 }
 
 function childProcessGroupId(mode: ProcessGroupMode): string {
-  result := try! run(
+  result := run(
     "/bin/sh",
     ["-c", "ps -o pgid= -p $$"],
     ExecOptions { withStdin: false, processGroupMode: mode },
-  )
+  )!
   assert(result.exitCode == 0, "expected child shell to report its process group")
   return bytesToString(result.stdout).trim()
 }
 
 function defaultChildProcessGroupId(): string {
-  result := try! run(
+  result := run(
     "/bin/sh",
     ["-c", "ps -o pgid= -p $$"],
     ExecOptions { withStdin: false },
-  )
+  )!
   assert(result.exitCode == 0, "expected child shell to report its process group")
   return bytesToString(result.stdout).trim()
 }
