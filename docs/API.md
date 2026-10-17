@@ -11,14 +11,14 @@ interactive stdin.
 import { ExecOptions, run } from "std/os"
 import { Duration } from "std/time"
 
-result := try! run(
+result := run(
   "git",
   ["status", "--short"],
   ExecOptions {
     timeout: Duration.ofSeconds(5L),
     mergeStderrIntoStdout: true,
   },
-)
+)!
 
 println("exit: ${result.exitCode}")
 ```
