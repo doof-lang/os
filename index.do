@@ -136,7 +136,7 @@ class ExecStderrStream implements Stream<readonly byte[]> {
 }
 
 export class Exec {
-  private readonly native: NativeExecProcess
+  private native: NativeExecProcess
 
   static spawn(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<Exec, string> {
     return case spawnNative(command, args, options) {
