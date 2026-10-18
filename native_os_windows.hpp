@@ -157,6 +157,7 @@ inline void closeHandle(HANDLE& handle) {
 }
 
 inline std::shared_ptr<std::vector<uint8_t>> readChunk(HANDLE& handle, bool& open) {
+    doof::CpuTokenRelease release;
     if (!open || handle == nullptr) return nullptr;
     auto bytes = std::make_shared<std::vector<uint8_t>>(4096);
     DWORD count = 0;
@@ -286,6 +287,7 @@ public:
     std::shared_ptr<std::vector<uint8_t>> nextStderrChunk() { return doof_os::readChunk(stderrRead_, stderrOpen_); }
 
     doof::Result<void, std::string> writeStdinText(const std::string& value) {
+        doof::CpuTokenRelease release;
         if (!stdinOpen_ || stdinWrite_ == nullptr) return doof::Failure<std::string>{"Stdin is not open for this process"};
         if (doof_os::containsNul(value)) return doof::Failure<std::string>{"Stdin payload contains a NUL byte"};
         size_t written = 0;
@@ -313,6 +315,7 @@ public:
     }
 
     doof::Result<int32_t, std::string> wait() {
+        doof::CpuTokenRelease release;
         if (process_ == nullptr) return doof::Failure<std::string>{"Process handle is invalid"};
         if (exited_) return doof::Success<int32_t>{exitCode_};
         const DWORD timeout = timeoutMilliseconds();
@@ -329,6 +332,7 @@ public:
     }
 
     doof::Result<std::shared_ptr<NativeRunResult>, std::string> runToCompletion() {
+        doof::CpuTokenRelease release;
         (void)closeStdin();
         auto stdoutBytes = std::make_shared<std::vector<uint8_t>>();
         auto stderrBytes = std::make_shared<std::vector<uint8_t>>();

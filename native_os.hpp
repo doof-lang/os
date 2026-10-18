@@ -457,6 +457,8 @@ public:
     }
 
     std::shared_ptr<std::vector<uint8_t>> nextStdoutChunk() {
+        // Pipe I/O and child waits block: let other actors use this CPU slot.
+        doof::CpuTokenRelease release;
         std::shared_ptr<std::vector<uint8_t>> out;
         if (!doof_os::readChunkFromFd(stdoutFd_, stdoutOpen_, out)) {
             doof::panic(doof_os::errnoMessage("Failed to read stdout"));
@@ -465,6 +467,7 @@ public:
     }
 
     std::shared_ptr<std::vector<uint8_t>> nextStderrChunk() {
+        doof::CpuTokenRelease release;
         std::shared_ptr<std::vector<uint8_t>> out;
         if (!doof_os::readChunkFromFd(stderrFd_, stderrOpen_, out)) {
             doof::panic(doof_os::errnoMessage("Failed to read stderr"));
@@ -473,6 +476,7 @@ public:
     }
 
     doof::Result<void, std::string> writeStdinText(const std::string& value) {
+        doof::CpuTokenRelease release;
         if (!stdinOpen_ || stdinFd_ < 0) {
             return doof::Failure<std::string>{"Stdin is not open for this process"};
         }
@@ -519,6 +523,7 @@ public:
     }
 
     doof::Result<int32_t, std::string> wait() {
+        doof::CpuTokenRelease release;
         if (childPid_ <= 0) {
             return doof::Failure<std::string>{"Process handle is invalid"};
         }
@@ -561,6 +566,7 @@ public:
     }
 
     doof::Result<std::shared_ptr<NativeRunResult>, std::string> runToCompletion() {
+        doof::CpuTokenRelease release;
         if (childPid_ <= 0) {
             return doof::Failure<std::string>{"Process handle is invalid"};
         }
