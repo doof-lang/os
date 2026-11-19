@@ -82,10 +82,7 @@ isolated function spawnNative(command: string, args: string[], options: ExecOpti
     envValues.push(value)
   }
 
-  let timeoutNanos: long | none = none
-  if options.timeout != none {
-    timeoutNanos = options.timeout!.toNanos()
-  }
+  timeoutNanos := options.timeout?.toNanos()
 
   return NativeExecProcess.spawn(
     command,
@@ -108,11 +105,10 @@ class ExecStdoutStream implements Stream<readonly byte[]> {
   let currentValue: readonly byte[] = []
 
   next(): bool {
-    chunk := this.process.nextStdoutChunk()
-    if chunk == none {
+    chunk := this.process.nextStdoutChunk() else {
       return false
     }
-    this.currentValue = chunk!
+    this.currentValue = chunk
     return true
   }
 
@@ -124,11 +120,10 @@ class ExecStderrStream implements Stream<readonly byte[]> {
   let currentValue: readonly byte[] = []
 
   next(): bool {
-    chunk := this.process.nextStderrChunk()
-    if chunk == none {
+    chunk := this.process.nextStderrChunk() else {
       return false
     }
-    this.currentValue = chunk!
+    this.currentValue = chunk
     return true
   }
 
@@ -209,21 +204,9 @@ export class ExecResult {
 }
 
 export isolated function run(command: string, args: string[] = [], options: ExecOptions = ExecOptions {}): Result<ExecResult, string> {
-  let proc: NativeExecProcess | none = none
-  case spawnNative(command, args, options) {
-    s: Success -> {
-      proc = s.value
-    }
-    f: Failure -> {
-      return Failure {
-        error: f.error
-      }
-    }
-  }
+  try proc := spawnNative(command, args, options)
 
-  assert(proc != none, "expected Exec.spawn success case to initialize proc")
-
-  return case proc!.runToCompletion() {
+  return case proc.runToCompletion() {
     s: Success -> Success {
       value: ExecResult {
         exitCode: s.value.exitCode(),

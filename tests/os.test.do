@@ -19,7 +19,7 @@ function assertSuccessVoid(result: Result<none, string>, context: string): none 
   case result {
     _: Success -> {}
     f: Failure -> {
-      assert(false, context + ": " + f.error)
+      assert(false, "${context}: ${f.error}")
     }
   }
 }
@@ -32,7 +32,7 @@ export function testEnvReadsKnownVariable(): none {
       value = s.value
     }
     f: Failure -> {
-      assert(false, "expected HOME to be present and non-empty: " + f.error)
+      assert(false, "expected HOME to be present and non-empty: ${f.error}")
     }
   }
   assert(value.length > 0, "expected HOME to be present and non-empty")
@@ -50,26 +50,18 @@ export function testPidPlatformArchitectureLookReasonable(): none {
 }
 
 export function testRunCapturesStdoutAndStderr(): none {
-  let result: ExecResult | none = none
   defaultOptions := ExecOptions {}
-  case run(
+  result := run(
     "/bin/sh",
     ["-c", "printf 'out'; printf 'err' 1>&2"],
     defaultOptions
-  ) {
-    s: Success -> {
-      result = s.value
-    }
-    f: Failure -> {
-      assert(false, "expected run() to succeed: " + f.error)
-    }
+  ) else error {
+    panic("expected run() to succeed: ${error}")
   }
 
-  assert(result != none, "expected run() to produce a result")
-
-  assert(result!.exitCode == 0, "expected shell command to exit successfully")
-  assert(bytesToString(result!.stdout) == "out", "expected stdout to be captured")
-  assert(bytesToString(result!.stderr) == "err", "expected stderr to be captured")
+  assert(result.exitCode == 0, "expected shell command to exit successfully")
+  assert(bytesToString(result.stdout) == "out", "expected stdout to be captured")
+  assert(bytesToString(result.stderr) == "err", "expected stderr to be captured")
 }
 
 export function testRunBoundsCapturedOutputWhileDrainingToCompletion(): none {
@@ -154,7 +146,7 @@ export function testInheritedProcessGroupTimeoutDoesNotSignalCaller(): none {
   )
   case result {
     s: Success -> {
-      assert(false, "expected inherited-group command to time out with exit code " + string(s.value.exitCode))
+      assert(false, "expected inherited-group command to time out with exit code ${s.value.exitCode}")
     }
     f: Failure -> {
       assert(f.error.contains("timed out"), "expected timeout failure without signalling the caller")
@@ -163,27 +155,19 @@ export function testInheritedProcessGroupTimeoutDoesNotSignalCaller(): none {
 }
 
 export function testRunAllowsCommandToCompleteBeforeTimeout(): none {
-  let result: ExecResult | none = none
   options := ExecOptions {
     timeout: Duration.ofSeconds(1L)
   }
 
-  case run(
+  result := run(
     "/bin/sh",
     ["-c", "printf 'done'"],
     options
-  ) {
-    s: Success -> {
-      result = s.value
-    }
-    f: Failure -> {
-      assert(false, "expected run() to complete before timeout: " + f.error)
-    }
+  ) else error {
+    panic("expected run() to complete before timeout: ${error}")
   }
-
-  assert(result != none, "expected run() to produce a result")
-  assert(result!.exitCode == 0, "expected shell command to exit successfully")
-  assert(bytesToString(result!.stdout) == "done", "expected stdout to be captured")
+  assert(result.exitCode == 0, "expected shell command to exit successfully")
+  assert(bytesToString(result.stdout) == "done", "expected stdout to be captured")
 }
 
 export function testRunTimesOutLongCommand(): none {
@@ -197,7 +181,7 @@ export function testRunTimesOutLongCommand(): none {
     options
   ) {
     s: Success -> {
-      assert(false, "expected run() to fail on timeout with exit code " + string(s.value.exitCode))
+      assert(false, "expected run() to fail on timeout with exit code ${s.value.exitCode}")
     }
     f: Failure -> {
       assert(f.error.contains("timed out"), "expected timeout failure message")
@@ -206,25 +190,17 @@ export function testRunTimesOutLongCommand(): none {
 }
 
 export function testSpawnedProcessWaitUsesTimeout(): none {
-  let proc: Exec | none = none
   options := ExecOptions {
     timeout: Duration.ofMillis(50L)
   }
 
-  case Exec.spawn("/bin/sh", ["-c", "sleep 1"], options) {
-    s: Success -> {
-      proc = s.value
-    }
-    f: Failure -> {
-      assert(false, "expected Exec.spawn to succeed: " + f.error)
-    }
+  proc := Exec.spawn("/bin/sh", ["-c", "sleep 1"], options) else error {
+    panic("expected Exec.spawn to succeed: ${error}")
   }
 
-  assert(proc != none, "expected Exec.spawn to produce a process")
-
-  case proc!.wait() {
+  case proc.wait() {
     s: Success -> {
-      assert(false, "expected wait() to fail on timeout with exit code " + string(s.value))
+      assert(false, "expected wait() to fail on timeout with exit code ${s.value}")
     }
     f: Failure -> {
       assert(f.error.contains("timed out"), "expected timeout failure message")
@@ -240,23 +216,15 @@ export function testExecSupportsCwdAndEnvOverride(): none {
     }
   }
 
-  let result: ExecResult | none = none
-  case run(
+  result := run(
     "/bin/sh",
     ["-c", "pwd; printf '%s' \"$DOOF_OS_TEST\""],
     options
-  ) {
-    s: Success -> {
-      result = s.value
-    }
-    f: Failure -> {
-      assert(false, "expected run() with cwd/env to succeed: " + f.error)
-    }
+  ) else error {
+    panic("expected run() with cwd/env to succeed: ${error}")
   }
 
-  assert(result != none, "expected run() to produce a result")
-
-  output := bytesToString(result!.stdout)
+  output := bytesToString(result.stdout)
   lines := output.split("\n")
 
   assert(lines.length >= 2, "expected cwd and env output lines")
@@ -265,33 +233,25 @@ export function testExecSupportsCwdAndEnvOverride(): none {
 }
 
 export function testExecStdinPushAndStreaming(): none {
-  let proc: Exec | none = none
   defaultOptions := ExecOptions {}
-  case Exec.spawn("/bin/sh", ["-c", "cat"], defaultOptions) {
-    s: Success -> {
-      proc = s.value
-    }
-    f: Failure -> {
-      assert(false, "expected Exec.spawn to succeed: " + f.error)
-    }
+  proc := Exec.spawn("/bin/sh", ["-c", "cat"], defaultOptions) else error {
+    panic("expected Exec.spawn to succeed: ${error}")
   }
 
-  assert(proc != none, "expected Exec.spawn to produce a process")
+  assertSuccessVoid(proc.writeStdinText("alpha\\n"), "expected first stdin write to succeed")
+  assertSuccessVoid(proc.writeStdinText("beta\\n"), "expected second stdin write to succeed")
+  assertSuccessVoid(proc.closeStdin(), "expected stdin close to succeed")
 
-  assertSuccessVoid(proc!.writeStdinText("alpha\\n"), "expected first stdin write to succeed")
-  assertSuccessVoid(proc!.writeStdinText("beta\\n"), "expected second stdin write to succeed")
-  assertSuccessVoid(proc!.closeStdin(), "expected stdin close to succeed")
-
-  stdoutBytes := collectStream(proc!.stdoutStream())
-  stderrBytes := collectStream(proc!.stderrStream())
+  stdoutBytes := collectStream(proc.stdoutStream())
+  stderrBytes := collectStream(proc.stderrStream())
 
   let exitCode = -1
-  case proc!.wait() {
+  case proc.wait() {
     s: Success -> {
       exitCode = s.value
     }
     f: Failure -> {
-      assert(false, "expected process wait to succeed: " + f.error)
+      assert(false, "expected process wait to succeed: ${f.error}")
     }
   }
 
